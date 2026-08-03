@@ -6,7 +6,8 @@
 const ValidatorView = (function () {
   let pendingOrders = [];
   let currentProposal = null;
-  let loadedFileSignature = null; // Guardar firma del archivo para evitar duplicados
+  let loadedFileSignature = null;
+  let filterHighResidualOnly = false; // Estado del filtro > 20% residuo
 
   function render(container) {
     container.innerHTML = `
@@ -76,7 +77,14 @@ const ValidatorView = (function () {
         <!-- PANEL DE CARRITO Y VISUALIZACIÓN GRÁFICA -->
         <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3>Lista de asignación</h3>
+            <div style="display: flex; align-items: center; gap: 15px;">
+              <h3>Lista de asignación</h3>
+              <!-- FILTRO DE RESIDUO MAYOR A 20% -->
+              <label style="font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; gap: 6px; background: #f1f5f9; padding: 4px 10px; border-radius: 4px; border: 1px solid #cbd5e1;">
+                <input type="checkbox" id="chk-filter-residual" onchange="ValidatorView.toggleResidualFilter(this.checked)">
+                <span>Ver solo desperdicio &gt; 20%</span>
+              </label>
+            </div>
             <button type="button" class="btn btn-success" id="btn-confirm-commit" onclick="ValidatorView.commitAssignments()" disabled>
               Confirmar
             </button>
@@ -89,6 +97,11 @@ const ValidatorView = (function () {
         </div>
       </div>
     `;
+  }
+
+  function toggleResidualFilter(checked) {
+    filterHighResidualOnly = checked;
+    renderProposalVisual();
   }
 
   function addSingleOrder() {
@@ -199,24 +212,45 @@ const ValidatorView = (function () {
 
     confirmBtn.disabled = currentProposal.assignments.length === 0;
 
+    let assignmentsToRender = currentProposal.assignments;
+
+    if (filterHighResidualOnly) {
+      assignmentsToRender = assignmentsToRender.filter(a => (a.residualPercentage || 0) > 20);
+    }
+
     let html = `<div style="max-height: 540px; overflow-y: auto;">`;
 
-    // 1. SOBRANTES ASIGNADOS CON INFORMACIÓN COMPLETA Y BOTÓN PARA ELIMINAR ASIGNACIÓN
-    if (currentProposal.assignments.length > 0) {
-      html += `<h4 style="color: #16a34a; margin-bottom: 12px;">Sobrantes Asignados (${currentProposal.assignments.length})</h4>`;
+    // 1. SOBRANTES ASIGNADOS
+    if (assignmentsToRender.length > 0) {
+      const totalCount = currentProposal.assignments.length;
+      const filteredCount = assignmentsToRender.length;
+      const countLabel = filterHighResidualOnly ? `${filteredCount} de ${totalCount}` : `${totalCount}`;
 
-      currentProposal.assignments.forEach((item, assignIdx) => {
+      html += `<h4 style="color: #16a34a; margin-bottom: 12px;">Sobrantes Asignados (${countLabel})</h4>`;
+
+      assignmentsToRender.forEach((item) => {
+        const assignIdx = currentProposal.assignments.indexOf(item);
         const matIdClean = item.materialId || item["MATERIAL_ID"] || item.MATERIAL_ID || "N/A";
         const origWidth = item.originalWidth || item.WIDTH || "N/A";
         const origCells = item.originalCells || item.CELLS || "N/A";
         const rack = item.rack || item.RACK || "N/A";
         const loc = item.loc || item.LOC || "N/A";
         const status = item.status || item.STATUS || "N/A";
+        const orientation = item.orientation || "WIDTH";
+        const resPct = item.residualPercentage !== undefined ? item.residualPercentage : 0;
 
         const badgeColor =
           status === "AUDITADO"
             ? "background: #dcfce7; color: #15803d;"
             : "background: #fef3c7; color: #b45309;";
+
+        const resBadgeStyle = resPct > 20 
+          ? "background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;" 
+          : "background: #f1f5f9; color: #475569;";
+
+        const isVertical = orientation === 'CELLS';
+        const containerHeight = isVertical ? `${Math.max(80, item.orders.length * 45)}px` : '60px';
+        const flexDirection = isVertical ? 'column' : 'row';
 
         html += `
           <div style="border: 2px solid #cbd5e1; border-radius: 6px; padding: 14px; margin-bottom: 16px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -225,8 +259,9 @@ const ValidatorView = (function () {
                 <span style="font-size: 0.75rem; font-weight: bold; color: #64748b; text-transform: uppercase;">SOBRANTE:</span>
                 <span style="font-size: 1.15rem; font-weight: 800; font-family: monospace; color: #2563eb; margin-left: 4px;">${matIdClean}</span>
                 <span class="badge" style="${badgeColor} margin-left: 8px;">${status}</span>
+                <span class="badge" style="${resBadgeStyle} margin-left: 4px;">Residuo: ${resPct}%</span>
                 <div style="font-size: 0.78rem; color: #475569; margin-top: 2px;">
-                  <b>PCN:</b> ${item.pcnId} | <b>Medidas remanente:</b> ${origWidth}W x ${origCells}C | <b>Ubicación:</b> ${rack}-${loc}
+                  <b>PCN:</b> ${item.pcnId} | <b>Medidas:</b> ${origWidth}W x ${origCells}C | <b>Acomodo:</b> <span style="color: ${isVertical ? '#0284c7' : '#059669'}; font-weight: bold;">${isVertical ? 'VERTICAL (CELLS)' : 'HORIZONTAL (WIDTH)'}</span> | <b>Ubicación:</b> ${rack}-${loc}
                 </div>
               </div>
               <div style="display: flex; gap: 6px;">
@@ -234,47 +269,56 @@ const ValidatorView = (function () {
                   Cambiar remanente
                 </button>
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="ValidatorView.removeAssignmentGroup(${assignIdx})" title="Eliminar asignación completa">
-                  Eliminar asignación
+                  Eliminar
                 </button>
               </div>
             </div>
 
-            <!-- RECTÁNGULOS DE CORTE DE PIEZAS -->
-            <div style="position: relative; width: 100%; height: 60px; background: #e2e8f0; border: 2px solid #94a3b8; border-radius: 4px; display: flex; overflow: hidden; align-items: center; padding: 2px;">`;
+            <!-- CONTENEDOR DINÁMICO DE CORTE (HORIZONTAL U HORIZONTAL/VERTICAL) -->
+            <div style="position: relative; width: 100%; height: ${containerHeight}; background: #e2e8f0; border: 2px solid #94a3b8; border-radius: 4px; display: flex; flex-direction: ${flexDirection}; overflow: hidden; padding: 2px; gap: 2px;">`;
 
-        let accumulatedWidthPercent = 0;
+        let accumulatedPercent = 0;
+        const totalDimension = isVertical ? Number(origCells) : Number(origWidth);
         const colors = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777"];
 
         item.orders.forEach((ord, idx) => {
-          const widthPct = Math.min(
-            (ord.width / Number(origWidth)) * 100 || 0,
-            100 - accumulatedWidthPercent
+          const pieceDimension = isVertical ? Number(ord.cells) : Number(ord.width);
+          const pct = Math.min(
+            (pieceDimension / totalDimension) * 100 || 0,
+            100 - accumulatedPercent
           );
-          accumulatedWidthPercent += widthPct;
+          accumulatedPercent += pct;
           const bg = colors[idx % colors.length];
 
+          const pieceStyle = isVertical 
+            ? `width: 100%; height: ${pct}%; border-bottom: 1px solid #fff;` 
+            : `width: ${pct}%; height: 100%; border-right: 1px solid #fff;`;
+
           html += `
-            <div style="width: ${widthPct}%; height: 100%; background: ${bg}; color: #fff; font-size: 0.75rem; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center; border-right: 1px solid #fff; overflow: hidden; padding: 2px;" title="Orden: ${ord.orderId} (${ord.width}W x ${ord.cells}C)">
-              <span>${ord.orderId}</span>
-              <span style="font-size: 0.65rem; opacity: 0.9;">${ord.width}W x ${ord.cells}C</span>
+            <div style="${pieceStyle} background: ${bg}; color: #fff; font-size: 0.75rem; font-weight: bold; display: flex; justify-content: space-between; align-items: center; overflow: hidden; padding: 4px 10px;" title="Orden: ${ord.orderId} (${ord.width}W x ${ord.cells}C)">
+              <span><b>${ord.orderId}</b></span>
+              <span style="font-size: 0.7rem; opacity: 0.9;">${ord.width}W x ${ord.cells}C</span>
             </div>`;
         });
 
         // Espacio libre residual
-        const remainingPct = Math.max(0, 100 - accumulatedWidthPercent);
+        const remainingPct = Math.max(0, 100 - accumulatedPercent);
         if (remainingPct > 0) {
+          const freeStyle = isVertical ? `width: 100%; height: ${remainingPct}%;` : `width: ${remainingPct}%; height: 100%;`;
           html += `
-            <div style="width: ${remainingPct}%; height: 100%; background: #cbd5e1; color: #64748b; font-size: 0.7rem; display: flex; justify-content: center; align-items: center;">
+            <div style="${freeStyle} background: #cbd5e1; color: #475569; font-size: 0.7rem; font-weight: bold; display: flex; justify-content: center; align-items: center;">
               Libre (${remainingPct.toFixed(0)}%)
             </div>`;
         }
 
         html += `</div></div>`;
       });
+    } else if (filterHighResidualOnly && currentProposal.assignments.length > 0) {
+      html += `<p style="color: #64748b; font-style: italic; padding: 10px;">No hay sobrantes asignados con residuo mayor al 20%.</p>`;
     }
 
     // 2. ÓRDENES SIN SOBRANTE AUTOMÁTICO
-    if (currentProposal.unassignedOrders.length > 0) {
+    if (currentProposal.unassignedOrders.length > 0 && !filterHighResidualOnly) {
       html += `<h4 style="color: #dc2626; margin-top: 20px; margin-bottom: 8px;">Ordenes sin asignación encontrada (${currentProposal.unassignedOrders.length})</h4>`;
 
       html += `<table style="width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-bottom: 12px;">
@@ -308,7 +352,6 @@ const ValidatorView = (function () {
     output.innerHTML = html;
   }
 
-  // Permite descartar una asignación completa del "Carrito"
   function removeAssignmentGroup(assignIdx) {
     if (!currentProposal || !currentProposal.assignments[assignIdx]) return;
 
@@ -383,6 +426,7 @@ const ValidatorView = (function () {
             originalWidth: Number(selectedMat.WIDTH),
             originalCells: Number(selectedMat.CELLS),
             status: selectedMat.STATUS,
+            orientation: 'WIDTH',
             orders: [
               {
                 orderId: order.orderId,
@@ -440,7 +484,6 @@ const ValidatorView = (function () {
     executeModalSearch();
   }
 
-  // BÚSQUEDA MANUAL EN tbInventario EXCLUYENDO MATERIALES YA ASIGNADOS
   function executeModalSearch() {
     const pcn = document.getElementById("modal-filter-pcn").value.trim();
     const width = Number(document.getElementById("modal-filter-width").value) || 0;
@@ -449,12 +492,10 @@ const ValidatorView = (function () {
 
     const rawInv = App.getDbTable("tbInventario");
 
-    // Extraer lista de MATERIAL_ID que ya están asignados actualmente en el carrito
     const assignedMaterialIds = (currentProposal.assignments || []).map((a) =>
       String(a.materialId || a.MATERIAL_ID || "").trim()
     );
 
-    // Filtrar coincidencias en tbInventario omitiendo los ya usados
     const matches = rawInv.filter((m) => {
       const matIdStr = String(m["MATERIAL_ID"] || m.MATERIAL_ID || "").trim();
       const isAlreadyAssigned = assignedMaterialIds.includes(matIdStr);
@@ -469,7 +510,7 @@ const ValidatorView = (function () {
     });
 
     if (matches.length === 0) {
-      container.innerHTML = `<p style="color: #dc2626; text-align: center; font-size: 0.85rem; padding: 12px;">No se encontraron sobrantes disponibles en tbInventario (los ya asignados en el carrito fueron excluidos).</p>`;
+      container.innerHTML = `<p style="color: #dc2626; text-align: center; font-size: 0.85rem; padding: 12px;">No se encontraron sobrantes disponibles en tbInventario.</p>`;
       return;
     }
 
@@ -524,7 +565,6 @@ const ValidatorView = (function () {
     }
   }
 
-  // POP-UP DE VALIDACIÓN DE LOTES COMPLETOS E INCOMPLETOS
   async function commitAssignments() {
     if (!currentProposal || currentProposal.assignments.length === 0) return;
 
@@ -563,55 +603,54 @@ const ValidatorView = (function () {
       }
     });
 
-    // Si existen lotes incompletos, mostrar ventana modal de confirmación
-    if (incompletePrefixes.length > 0) {
-      openBatchValidationModal(completePrefixes, incompletePrefixes);
-      return;
-    }
-
-    // Si todo está completo, procesar de inmediato
-    await executeCommitProcess(currentProposal.assignments);
+    openBatchValidationModal(completePrefixes, incompletePrefixes);
   }
 
   function openBatchValidationModal(completePrefixes, incompletePrefixes) {
     let completeListHtml = "";
     if (completePrefixes.length === 0) {
-      completeListHtml = `<li style="color: #64748b;">No hay ordenes 100% completos para procesar.</li>`;
+      completeListHtml = `<li style="color: #64748b;">No hay lotes 100% completos en este bloque.</li>`;
     } else {
       completePrefixes.forEach((p) => {
-        completeListHtml += `<li><b>Lote ${p}</b>: Todas las órdenes están asignadas.</li>`;
+        completeListHtml += `<li><b>Lote ${p}</b>: 100% de las órdenes asignadas.</li>`;
       });
     }
 
     let incompleteListHtml = "";
-    incompletePrefixes.forEach((inc) => {
-      incompleteListHtml += `<li><b>Orden ${inc.prefix10}</b>: ${inc.assigned} de ${inc.total} órdenes asignadas (Incompleto).</li>`;
-    });
+    if (incompletePrefixes.length === 0) {
+      incompleteListHtml = `<li style="color: #64748b;">No hay lotes incompletos.</li>`;
+    } else {
+      incompletePrefixes.forEach((inc) => {
+        incompleteListHtml += `<li><b>Lote ${inc.prefix10}</b>: ${inc.assigned} de ${inc.total} órdenes asignadas.</li>`;
+      });
+    }
 
     const modalHtml = `
       <div id="modal-batch-confirm" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div style="background: #fff; width: 90%; max-width: 650px; border-radius: 8px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-          <h3 style="margin-top: 0; color: #b45309;">⚠️ Advertencia de ordenes completas</h3>
+          <h3 style="margin-top: 0; color: #1e293b;">📋 Resumen de Asignación por Lotes</h3>
           <p style="font-size: 0.85rem; color: #475569;">
-            Se detectaron ordenes que no están completas. Solo se procesarán las órdenes cuya asignación sea completa y las incompletas se descartarán.
+            A continuación se presenta el balance del lote. Todas las órdenes con sobrante asignado serán procesadas en la base de datos.
           </p>
 
-          <div style="background: #fefce8; border: 1px solid #fef08a; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 0.8rem;">
-            <strong style="color: #854d0e;">❌ Ordenes incompletas:</strong>
-            <ul style="margin: 6px 0 0 18px; padding: 0; color: #991b1b;">${incompleteListHtml}</ul>
-          </div>
+          ${incompletePrefixes.length > 0 ? `
+            <div style="background: #fefce8; border: 1px solid #fef08a; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 0.8rem;">
+              <strong style="color: #854d0e;">⚠️ Lotes Incompletos:</strong>
+              <ul style="margin: 6px 0 0 18px; padding: 0; color: #991b1b;">${incompleteListHtml}</ul>
+            </div>
+          ` : ''}
 
           <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px; border-radius: 6px; margin-bottom: 16px; font-size: 0.8rem;">
-            <strong style="color: #166534;">✅ Ordenes completas:</strong>
+            <strong style="color: #166534;">✅ Lotes Completos:</strong>
             <ul style="margin: 6px 0 0 18px; padding: 0; color: #15803d;">${completeListHtml}</ul>
           </div>
 
           <div style="display: flex; justify-content: flex-end; gap: 10px;">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-batch-confirm').remove()">
-              Cancelar
+              Cancelar / Revisar
             </button>
-            <button type="button" class="btn btn-success" id="btn-proceed-filtered-commit" ${completePrefixes.length === 0 ? "disabled" : ""}>
-              Confirmar
+            <button type="button" class="btn btn-success" id="btn-proceed-commit-all">
+              Confirmar y Guardar Todo
             </button>
           </div>
         </div>
@@ -622,28 +661,11 @@ const ValidatorView = (function () {
     if (existing) existing.remove();
     document.body.insertAdjacentHTML("beforeend", modalHtml);
 
-    const proceedBtn = document.getElementById("btn-proceed-filtered-commit");
+    const proceedBtn = document.getElementById("btn-proceed-commit-all");
     if (proceedBtn) {
       proceedBtn.onclick = async () => {
         document.getElementById("modal-batch-confirm").remove();
-
-        // Filtrar asignaciones manteniendo únicamente órdenes de lotes completos
-        const filteredAssignments = [];
-        currentProposal.assignments.forEach((assignment) => {
-          const validOrders = assignment.orders.filter((ord) => {
-            const p10 = String(ord.orderId || ord.ORDER_ID).substring(0, 10);
-            return completePrefixes.includes(p10);
-          });
-
-          if (validOrders.length > 0) {
-            filteredAssignments.push({
-              ...assignment,
-              orders: validOrders,
-            });
-          }
-        });
-
-        await executeCommitProcess(filteredAssignments);
+        await executeCommitProcess(currentProposal.assignments);
       };
     }
   }
@@ -674,7 +696,6 @@ const ValidatorView = (function () {
     }
   }
 
-  // CONSULTA Y EXPORTACIÓN DE STANDBY Y ASIGNACIONES REALIZADAS
   function openStandbyModal() {
     const standbyList = App.getDbTable("tbStandby") || [];
     const activeStandby = standbyList.filter((s) => s.STATUS !== "RESOLVED" && s.STATUS !== "ELIMINADO");
@@ -928,6 +949,7 @@ const ValidatorView = (function () {
 
   return {
     render: render,
+    toggleResidualFilter: toggleResidualFilter,
     addSingleOrder: addSingleOrder,
     loadOrdersCSV: loadOrdersCSV,
     resetQueue: resetQueue,
