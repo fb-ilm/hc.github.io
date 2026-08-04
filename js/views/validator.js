@@ -627,25 +627,33 @@ const ValidatorView = (function () {
 
     const modalHtml = `
       <div id="modal-batch-confirm" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
-        <div style="background: #fff; width: 90%; max-width: 650px; border-radius: 8px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-          <h3 style="margin-top: 0; color: #1e293b;">📋 Resumen de Asignación por Lotes</h3>
-          <p style="font-size: 0.85rem; color: #475569;">
-            A continuación se presenta el balance del lote. Todas las órdenes con sobrante asignado serán procesadas en la base de datos.
-          </p>
-
-          ${incompletePrefixes.length > 0 ? `
-            <div style="background: #fefce8; border: 1px solid #fef08a; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 0.8rem;">
-              <strong style="color: #854d0e;">⚠️ Lotes Incompletos:</strong>
-              <ul style="margin: 6px 0 0 18px; padding: 0; color: #991b1b;">${incompleteListHtml}</ul>
-            </div>
-          ` : ''}
-
-          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px; border-radius: 6px; margin-bottom: 16px; font-size: 0.8rem;">
-            <strong style="color: #166534;">✅ Lotes Completos:</strong>
-            <ul style="margin: 6px 0 0 18px; padding: 0; color: #15803d;">${completeListHtml}</ul>
+        <div style="background: #fff; width: 90%; max-width: 650px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+          
+          <!-- CABECERA (FIJA) -->
+          <div style="flex-shrink: 0;">
+            <h3 style="margin-top: 0; color: #1e293b;">Resumen de Asignación por ordenes</h3>
+            <p style="font-size: 0.85rem; color: #475569; margin-bottom: 12px;">
+              A continuación se presenta el balance de las ordenes. Todas las órdenes con sobrante asignado serán procesadas en la base de datos.
+            </p>
           </div>
 
-          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+          <!-- CUERPO SCROLLABLE PARA MUCHAS ÓRDENES -->
+          <div style="flex: 1; overflow-y: auto; padding-right: 6px; margin-bottom: 16px;">
+            ${incompletePrefixes.length > 0 ? `
+              <div style="background: #fefce8; border: 1px solid #fef08a; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 0.8rem;">
+                <strong style="color: #854d0e;">⚠️ Ordenes Incompletas:</strong>
+                <ul style="margin: 6px 0 0 18px; padding: 0; color: #991b1b; max-height: 150px; overflow-y: auto;">${incompleteListHtml}</ul>
+              </div>
+            ` : ''}
+
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px; border-radius: 6px; font-size: 0.8rem;">
+              <strong style="color: #166534;">✅ Ordenes Completas:</strong>
+              <ul style="margin: 6px 0 0 18px; padding: 0; color: #15803d; max-height: 200px; overflow-y: auto;">${completeListHtml}</ul>
+            </div>
+          </div>
+
+          <!-- PIE DE PÁGINA / BOTONES (FIJO) -->
+          <div style="flex-shrink: 0; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-batch-confirm').remove()">
               Cancelar / Revisar
             </button>
@@ -653,6 +661,7 @@ const ValidatorView = (function () {
               Confirmar y Guardar Todo
             </button>
           </div>
+
         </div>
       </div>
     `;
