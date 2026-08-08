@@ -156,7 +156,7 @@ const ValidatorView = (function () {
       document.getElementById("file-orders-csv").disabled = true;
       document.getElementById("btn-load-csv").disabled = true;
 
-      // Pop-up con estatus claro
+      // Pop-up con estatus claro para el renderizado
       App.showLoader(`Calculando propuesta óptima para ${pendingOrders.length} órdenes...`);
 
       // Breve retardo para permitir que el loader aparezca en pantalla antes de calcular
@@ -195,7 +195,7 @@ const ValidatorView = (function () {
       
       App.showLoader("Generando vista previa de asignaciones...");
       
-      // Permitir que el navegador dibuje el mensaje antes de renderizar el HTML masivo
+      // Permitir que el navegador dibuje el mensaje antes de renderizar el HTML masivo xd
       setTimeout(() => {
         renderProposalVisual();
         App.hideLoader();
