@@ -7,7 +7,7 @@ const ValidatorView = (function () {
   let pendingOrders = [];
   let currentProposal = null;
   let loadedFileSignature = null;
-  let filterHighResidualOnly = false; // Estado del filtro > 20% residuo
+  let filterHighResidualOnly = false;
 
   function render(container) {
     container.innerHTML = `
@@ -27,7 +27,6 @@ const ValidatorView = (function () {
       </div>
 
       <div style="display: grid; grid-template-columns: 400px 1fr; gap: 10px;">
-        <!-- PANEL DE ENTRADA -->
         <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <h3>Ingreso de datos</h3>
@@ -35,7 +34,6 @@ const ValidatorView = (function () {
           </div>
           <hr style="margin: 12px 0;">
 
-          <!-- MODO MANUAL -->
           <form id="form-single-order" onsubmit="return false;" style="margin-bottom: 20px;">
             <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Ingreso manual</h4>
             <div class="form-group">
@@ -61,7 +59,6 @@ const ValidatorView = (function () {
             </button>
           </form>
 
-          <!-- MODO MASIVO CSV -->
           <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px dashed #cbd5e1;">
             <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Carga de datos</h4>
             <p style="font-size: 0.72rem; color: #64748b; margin-bottom: 8px;">
@@ -74,12 +71,10 @@ const ValidatorView = (function () {
           </div>
         </div>
 
-        <!-- PANEL DE CARRITO Y VISUALIZACIÓN GRÁFICA -->
         <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 15px;">
               <h3>Lista de asignación</h3>
-              <!-- FILTRO DE RESIDUO MAYOR A 20% -->
               <label style="font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; gap: 6px; background: #f1f5f9; padding: 4px 10px; border-radius: 4px; border: 1px solid #cbd5e1;">
                 <input type="checkbox" id="chk-filter-residual" onchange="ValidatorView.toggleResidualFilter(this.checked)">
                 <span>Ver solo desperdicio &gt; 20%</span>
@@ -115,7 +110,7 @@ const ValidatorView = (function () {
       return;
     }
 
-    if (pendingOrders.some((o) => String(o.ORDER_ID) === String(orderId))) {
+    if (pendingOrders.some((o) => String(o.ORDER_ID || o.orderId) === String(orderId))) {
       App.showToast(`La orden ${orderId} ya está agregada en la lista.`, "error");
       return;
     }
@@ -135,7 +130,7 @@ const ValidatorView = (function () {
     document.getElementById("val-order-id").focus();
 
     App.showToast(`Orden ${orderId} agregada.`, "info");
-    processProposal();
+    processProposalAsync();
   }
 
   async function loadOrdersCSV() {
@@ -150,12 +145,8 @@ const ValidatorView = (function () {
       return;
     }
 
-    if (pendingOrders.length > 0 && loadedFileSignature) {
-      App.showToast("Ya existe un archivo cargado en proceso. Confirma o limpia la propuesta actual.", "error");
-      return;
-    }
-
     try {
+      App.showLoader("Leyendo archivo CSV...");
       const required = ["ORDER_DATE", "PCN_ID", "ORDER_ID", "WIDTH", "CELLS"];
       const parsed = await CSVParser.parseFile(file, required);
 
@@ -165,30 +156,20 @@ const ValidatorView = (function () {
       document.getElementById("file-orders-csv").disabled = true;
       document.getElementById("btn-load-csv").disabled = true;
 
-      App.showToast(`${parsed.data.length} órdenes cargadas exitosamente.`, "success");
-      processProposal();
+      // Pop-up con estatus claro
+      App.showLoader(`Calculando propuesta óptima para ${pendingOrders.length} órdenes...`);
+
+      // Breve retardo para permitir que el loader aparezca en pantalla antes de calcular
+      setTimeout(() => {
+        processProposal();
+        App.hideLoader();
+        App.showToast("Asignación calculada exitosamente.", "success");
+      }, 60);
+
     } catch (err) {
+      App.hideLoader();
       App.showToast(err.message, "error");
     }
-  }
-
-  function resetQueue() {
-    pendingOrders = [];
-    currentProposal = null;
-    loadedFileSignature = null;
-
-    const fileInput = document.getElementById("file-orders-csv");
-    const loadBtn = document.getElementById("btn-load-csv");
-    if (fileInput) {
-      fileInput.disabled = false;
-      fileInput.value = "";
-    }
-    if (loadBtn) {
-      loadBtn.disabled = false;
-    }
-
-    renderProposalVisual();
-    App.showToast("Lista y controles reiniciados.", "info");
   }
 
   function processProposal() {
@@ -197,6 +178,273 @@ const ValidatorView = (function () {
     renderProposalVisual();
   }
 
+  function processProposalAsync() {
+    if (!pendingOrders || pendingOrders.length === 0) {
+      App.hideLoader();
+      return;
+    }
+
+    App.showLoader(`Iniciando optimización para ${pendingOrders.length} órdenes...`);
+
+    const rawInv = App.getDbTable("tbInventario");
+    
+    calculateAssignmentsInChunks(rawInv, pendingOrders, (progressPct) => {
+      App.showLoader(`Calculando acomodo óptimo: ${progressPct}% completado...`);
+    }).then((proposal) => {
+      currentProposal = proposal;
+      
+      App.showLoader("Generando vista previa de asignaciones...");
+      
+      // Permitir que el navegador dibuje el mensaje antes de renderizar el HTML masivo
+      setTimeout(() => {
+        renderProposalVisual();
+        App.hideLoader();
+        App.showToast("Propuesta de asignación procesada con éxito.", "success");
+      }, 50);
+
+    }).catch((err) => {
+      console.error("Error al procesar asignaciones:", err);
+      App.hideLoader();
+      App.showToast("Error procesando optimización: " + err.message, "error");
+    });
+  }
+
+  function calculateAssignmentsInChunks(inventory, orders, progressCallback) {
+    return new Promise((resolve, reject) => {
+      try {
+        let availableMaterials = inventory
+          .filter(m => m.STATUS !== 'ELIMINADO')
+          .map(m => {
+            const w = Number(m.WIDTH) || 0;
+            const c = Number(m.CELLS) || 0;
+            const usableW = Math.max(0, w - (CONFIG.MARGINS.WIDTH || 0));
+            const usableC = Math.max(0, c - (CONFIG.MARGINS.CELLS || 0));
+
+            return {
+              ...m,
+              widthNum: w,
+              cellsNum: c,
+              usableWidth: usableW,
+              usableCells: usableC,
+              remainingWidth: usableW,
+              remainingCells: usableC,
+              orientation: null,
+              assignedOrders: []
+            };
+          });
+
+        const groupsMap = {};
+        orders.forEach(order => {
+          const pcn = String(order.PCN_ID || order.pcnId).trim();
+          const w = Number(order.WIDTH || order.width) || 0;
+          const c = Number(order.CELLS || order.cells) || 0;
+          const key = `${pcn}_${w}_${c}`;
+
+          if (!groupsMap[key]) {
+            groupsMap[key] = { pcnId: pcn, width: w, cells: c, orders: [] };
+          }
+          groupsMap[key].orders.push(order);
+        });
+
+        const orderGroups = Object.values(groupsMap).sort((a, b) => {
+          return (b.width * b.cells * b.orders.length) - (a.width * a.cells * a.orders.length);
+        });
+
+        const unassignedOrders = [];
+        let groupIndex = 0;
+        const totalGroups = orderGroups.length;
+
+        function processNextChunk() {
+          const chunkSize = 10; // Reducido a 10 grupos por iteración para aligerar la carga por bloque
+          const end = Math.min(groupIndex + chunkSize, totalGroups);
+
+          for (; groupIndex < end; groupIndex++) {
+            const group = orderGroups[groupIndex];
+            const reqPcn = group.pcnId;
+            const reqWidth = group.width;
+            const reqCells = group.cells;
+            let remainingInGroup = [...group.orders];
+
+            while (remainingInGroup.length > 0) {
+              let bestEvaluation = null;
+
+              availableMaterials.forEach(mat => {
+                if (String(mat.PCN_ID).trim() !== reqPcn) return;
+
+                let maxWidthQty = 0;
+                if (mat.orientation === null || mat.orientation === 'WIDTH') {
+                  if (reqCells <= mat.usableCells) {
+                    maxWidthQty = Math.floor(mat.remainingWidth / reqWidth);
+                  }
+                }
+
+                let maxCellsQty = 0;
+                const maxExistingW = mat.assignedOrders.reduce((max, o) => Math.max(max, o.width), 0);
+                const allowCellsSwitch = (mat.orientation === null || mat.orientation === 'CELLS') || 
+                                         (mat.orientation === 'WIDTH' && Math.max(maxExistingW, reqWidth) <= mat.usableWidth);
+
+                if (allowCellsSwitch && reqWidth <= mat.usableWidth) {
+                  const currentUsedCells = mat.assignedOrders.reduce((sum, o) => sum + o.cells, 0);
+                  const remCells = mat.usableCells - currentUsedCells;
+                  maxCellsQty = Math.floor(remCells / reqCells);
+                }
+
+                if (maxWidthQty === 0 && maxCellsQty === 0) return;
+
+                let chosenOrientation = (maxWidthQty >= maxCellsQty && maxWidthQty > 0) ? 'WIDTH' : 'CELLS';
+                let fitQty = (chosenOrientation === 'WIDTH') 
+                  ? Math.min(maxWidthQty, remainingInGroup.length) 
+                  : Math.min(maxCellsQty, remainingInGroup.length);
+
+                const currentUsedArea = mat.assignedOrders.reduce((sum, o) => sum + (o.width * o.cells), 0);
+                const addedArea = fitQty * (reqWidth * reqCells);
+                const totalUsableArea = mat.usableWidth * mat.usableCells;
+                const projectedUsedArea = currentUsedArea + addedArea;
+                const projectedResidualPct = totalUsableArea > 0 ? Math.max(0, ((totalUsableArea - projectedUsedArea) / totalUsableArea) * 100) : 100;
+
+                const evalItem = {
+                  material: mat,
+                  chosenOrientation: chosenOrientation,
+                  fitQty: fitQty,
+                  projectedResidualPct: projectedResidualPct
+                };
+
+                if (!bestEvaluation || isBetterOption(evalItem, bestEvaluation)) {
+                  bestEvaluation = evalItem;
+                }
+              });
+
+              if (!bestEvaluation || bestEvaluation.fitQty === 0) {
+                remainingInGroup.forEach(o => {
+                  unassignedOrders.push({
+                    orderId: o.ORDER_ID || o.orderId,
+                    orderDate: o.ORDER_DATE || o.orderDate,
+                    pcnId: reqPcn,
+                    width: reqWidth,
+                    cells: reqCells,
+                    reason: "NO_MATERIAL_AVAILABLE"
+                  });
+                });
+                break;
+              }
+
+              const targetMat = bestEvaluation.material;
+              const ordersToAssign = remainingInGroup.splice(0, bestEvaluation.fitQty);
+
+              targetMat.orientation = bestEvaluation.chosenOrientation;
+              ordersToAssign.forEach(o => {
+                targetMat.assignedOrders.push({
+                  orderId: o.ORDER_ID || o.orderId,
+                  orderDate: o.ORDER_DATE || o.orderDate,
+                  pcnId: reqPcn,
+                  width: reqWidth,
+                  cells: reqCells
+                });
+              });
+
+              if (targetMat.orientation === 'WIDTH') {
+                const usedW = targetMat.assignedOrders.reduce((sum, o) => sum + o.width, 0);
+                targetMat.remainingWidth = Math.max(0, targetMat.usableWidth - usedW);
+                targetMat.remainingCells = targetMat.usableCells;
+              } else {
+                const usedC = targetMat.assignedOrders.reduce((sum, o) => sum + o.cells, 0);
+                targetMat.remainingCells = Math.max(0, targetMat.usableCells - usedC);
+                targetMat.remainingWidth = targetMat.usableWidth;
+              }
+            }
+          }
+
+          if (typeof progressCallback === 'function' && totalGroups > 0) {
+            const pct = Math.round((groupIndex / totalGroups) * 100);
+            progressCallback(pct);
+          }
+
+          if (groupIndex < totalGroups) {
+            setTimeout(processNextChunk, 15);
+          } else {
+            const proposedAssignments = [];
+            availableMaterials.forEach(mat => {
+              if (mat.assignedOrders.length > 0) {
+                const totalArea = mat.widthNum * mat.cellsNum;
+                const usedArea = mat.assignedOrders.reduce((sum, o) => sum + (o.width * o.cells), 0);
+                const residualArea = Math.max(0, totalArea - usedArea);
+                const residualPercentage = totalArea > 0 ? (residualArea / totalArea) * 100 : 0;
+
+                let generatedSubRemanent = null;
+                const matIdClean = mat["MATERIAL_ID"] || mat.MATERIAL_ID;
+                const remW = (mat.orientation === 'WIDTH') ? mat.remainingWidth : mat.usableWidth;
+                const remC = (mat.orientation === 'WIDTH') ? mat.usableCells : mat.remainingCells;
+
+                if (remW >= 24 && remC >= 30) {
+                  generatedSubRemanent = {
+                    subMaterialId: `${matIdClean}-SUB1`,
+                    parentMaterialId: matIdClean,
+                    pcnId: mat.PCN_ID,
+                    width: Number(remW.toFixed(3)),
+                    cells: Number(remC.toFixed(3)),
+                    rack: mat.RACK || '',
+                    loc: mat.LOC || ''
+                  };
+                }
+
+                proposedAssignments.push({
+                  materialId: matIdClean,
+                  pcnId: mat.PCN_ID,
+                  rack: mat.RACK,
+                  loc: mat.LOC,
+                  originalWidth: mat.widthNum,
+                  originalCells: mat.cellsNum,
+                  remainingWidth: mat.remainingWidth,
+                  remainingCells: mat.remainingCells,
+                  orientation: mat.orientation || 'WIDTH',
+                  residualPercentage: Number(residualPercentage.toFixed(2)),
+                  status: mat.STATUS,
+                  recordDate: mat.RECORD_DATE,
+                  orders: mat.assignedOrders,
+                  generatedSubRemanent: generatedSubRemanent
+                });
+              }
+            });
+
+            resolve({
+              assignments: proposedAssignments,
+              unassignedOrders: unassignedOrders
+            });
+          }
+        }
+
+        function isBetterOption(cand, currentBest) {
+          const matA = cand.material;
+          const matB = currentBest.material;
+
+          if (matA.STATUS === 'AUDITADO' && matB.STATUS !== 'AUDITADO') return true;
+          if (matA.STATUS !== 'AUDITADO' && matB.STATUS === 'AUDITADO') return false;
+
+          if (cand.fitQty !== currentBest.fitQty) return cand.fitQty > currentBest.fitQty;
+
+          const countA = matA.assignedOrders.length;
+          const countB = matB.assignedOrders.length;
+          if (countA > 0 && countB === 0) return true;
+          if (countA === 0 && countB > 0) return false;
+
+          if (Math.abs(cand.projectedResidualPct - currentBest.projectedResidualPct) > 0.1) {
+            return cand.projectedResidualPct < currentBest.projectedResidualPct;
+          }
+
+          const dateA = new Date(matA.RECORD_DATE || 0);
+          const dateB = new Date(matB.RECORD_DATE || 0);
+          return dateA < dateB;
+        }
+
+        setTimeout(processNextChunk, 20);
+
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  // RENDERIZADO EFICIENTE CON LÍMITE INICIAL PARA EVITAR CONGELAR EL NAVEGADOR
   function renderProposalVisual() {
     const output = document.getElementById("proposal-output");
     const confirmBtn = document.getElementById("btn-confirm-commit");
@@ -218,9 +466,8 @@ const ValidatorView = (function () {
       assignmentsToRender = assignmentsToRender.filter(a => (a.residualPercentage || 0) > 20);
     }
 
-    let html = `<div style="max-height: 540px; overflow-y: auto;">`;
+    let html = `<div style="max-height: 580px; overflow-y: auto;">`;
 
-    // 1. SOBRANTES ASIGNADOS
     if (assignmentsToRender.length > 0) {
       const totalCount = currentProposal.assignments.length;
       const filteredCount = assignmentsToRender.length;
@@ -228,16 +475,22 @@ const ValidatorView = (function () {
 
       html += `<h4 style="color: #16a34a; margin-bottom: 12px;">Sobrantes Asignados (${countLabel})</h4>`;
 
-      assignmentsToRender.forEach((item) => {
+      const RENDER_LIMIT = 60;
+      const itemsToDraw = assignmentsToRender.slice(0, RENDER_LIMIT);
+
+      itemsToDraw.forEach((item) => {
         const assignIdx = currentProposal.assignments.indexOf(item);
         const matIdClean = item.materialId || item["MATERIAL_ID"] || item.MATERIAL_ID || "N/A";
-        const origWidth = item.originalWidth || item.WIDTH || "N/A";
-        const origCells = item.originalCells || item.CELLS || "N/A";
+        const origWidth = Number(item.originalWidth || item.WIDTH || 1);
+        const origCells = Number(item.originalCells || item.CELLS || 1);
         const rack = item.rack || item.RACK || "N/A";
         const loc = item.loc || item.LOC || "N/A";
         const status = item.status || item.STATUS || "N/A";
         const orientation = item.orientation || "WIDTH";
         const resPct = item.residualPercentage !== undefined ? item.residualPercentage : 0;
+        
+        // Garantizar lectura del arreglo
+        const subRems = item.generatedSubRemanents || [];
 
         const badgeColor =
           status === "AUDITADO"
@@ -249,14 +502,24 @@ const ValidatorView = (function () {
           : "background: #f1f5f9; color: #475569;";
 
         const isVertical = orientation === 'CELLS';
-        const containerHeight = isVertical ? `${Math.max(80, item.orders.length * 45)}px` : '60px';
-        const flexDirection = isVertical ? 'column' : 'row';
+        const colors = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777"];
+
+        const subLateral = subRems.find(s => s.type === 'LATERAL');
+        const subBottom = subRems.find(s => s.type === 'BOTTOM');
+
+        const maxOrdersW = item.orders.reduce((max, o) => Math.max(max, o.width), 0);
+        const sumOrdersW = item.orders.reduce((sum, o) => sum + o.width, 0);
+        const sumOrdersC = item.orders.reduce((sum, o) => sum + o.cells, 0);
+        const maxOrdersC = item.orders.reduce((max, o) => Math.max(max, o.cells), 0);
+
+        const usedWidthPct = isVertical ? (maxOrdersW / origWidth) * 100 : (sumOrdersW / origWidth) * 100;
+        const usedCellsPct = isVertical ? (sumOrdersC / origCells) * 100 : (maxOrdersC / origCells) * 100;
 
         html += `
           <div style="border: 2px solid #cbd5e1; border-radius: 6px; padding: 14px; margin-bottom: 16px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #f8fafc; padding: 8px 12px; border-radius: 4px; border: 1px solid #e2e8f0;">
               <div>
-                <span style="font-size: 0.75rem; font-weight: bold; color: #64748b; text-transform: uppercase;">SOBRANTE:</span>
+                <span style="font-size: 0.75rem; font-weight: bold; color: #64748b; text-transform: uppercase;">SOBRANTE PADRE:</span>
                 <span style="font-size: 1.15rem; font-weight: 800; font-family: monospace; color: #2563eb; margin-left: 4px;">${matIdClean}</span>
                 <span class="badge" style="${badgeColor} margin-left: 8px;">${status}</span>
                 <span class="badge" style="${resBadgeStyle} margin-left: 4px;">Residuo: ${resPct}%</span>
@@ -274,50 +537,78 @@ const ValidatorView = (function () {
               </div>
             </div>
 
-            <!-- CONTENEDOR DINÁMICO DE CORTE (HORIZONTAL U HORIZONTAL/VERTICAL) -->
-            <div style="position: relative; width: 100%; height: ${containerHeight}; background: #e2e8f0; border: 2px solid #94a3b8; border-radius: 4px; display: flex; flex-direction: ${flexDirection}; overflow: hidden; padding: 2px; gap: 2px;">`;
-
-        let accumulatedPercent = 0;
-        const totalDimension = isVertical ? Number(origCells) : Number(origWidth);
-        const colors = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777"];
+            <!-- CONTENEDOR GEOMÉTRICO (REPRESENTACIÓN FIEL DEL DIAGRAMA) -->
+            <div style="position: relative; width: 100%; height: 180px; background: #0f172a; border: 2px solid #475569; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; padding: 3px; gap: 3px;">
+              
+              <!-- BLOQUE SUPERIOR (ÓRDENES + SUB-REMANENTE LATERAL) -->
+              <div style="display: flex; width: 100%; height: ${Math.min(usedCellsPct, 100)}%; gap: 3px; overflow: hidden;">
+                
+                <!-- COLUMNA DE ÓRDENES -->
+                <div style="width: ${Math.min(usedWidthPct, 100)}%; height: 100%; display: flex; flex-direction: ${isVertical ? 'column' : 'row'}; gap: 2px;">`;
 
         item.orders.forEach((ord, idx) => {
           const pieceDimension = isVertical ? Number(ord.cells) : Number(ord.width);
-          const pct = Math.min(
-            (pieceDimension / totalDimension) * 100 || 0,
-            100 - accumulatedPercent
-          );
-          accumulatedPercent += pct;
+          const totalDimension = isVertical ? sumOrdersC : sumOrdersW;
+          const pct = (pieceDimension / totalDimension) * 100 || 0;
           const bg = colors[idx % colors.length];
 
           const pieceStyle = isVertical 
-            ? `width: 100%; height: ${pct}%; border-bottom: 1px solid #fff;` 
-            : `width: ${pct}%; height: 100%; border-right: 1px solid #fff;`;
+            ? `width: 100%; height: ${pct}%;` 
+            : `width: ${pct}%; height: 100%;`;
 
           html += `
-            <div style="${pieceStyle} background: ${bg}; color: #fff; font-size: 0.75rem; font-weight: bold; display: flex; justify-content: space-between; align-items: center; overflow: hidden; padding: 4px 10px;" title="Orden: ${ord.orderId} (${ord.width}W x ${ord.cells}C)">
+            <div style="${pieceStyle} background: ${bg}; color: #fff; font-size: 0.75rem; font-weight: bold; display: flex; justify-content: space-between; align-items: center; overflow: hidden; padding: 2px 8px; border-radius: 2px;" title="Orden: ${ord.orderId} (${ord.width}W x ${ord.cells}C)">
               <span><b>${ord.orderId}</b></span>
-              <span style="font-size: 0.7rem; opacity: 0.9;">${ord.width}W x ${ord.cells}C</span>
+              <span style="font-size: 0.68rem; opacity: 0.9;">${ord.width}W x ${ord.cells}C</span>
             </div>`;
         });
 
-        // Espacio libre residual
-        const remainingPct = Math.max(0, 100 - accumulatedPercent);
-        if (remainingPct > 0) {
-          const freeStyle = isVertical ? `width: 100%; height: ${remainingPct}%;` : `width: ${remainingPct}%; height: 100%;`;
+        html += `</div>`;
+
+        // SUB-REMANENTE 1 (LATERAL: RECTÁNGULO GRIS OSCURO CON BORDE PUNTEADO)
+        const latPct = Math.max(0, 100 - usedWidthPct);
+        if (subLateral) {
           html += `
-            <div style="${freeStyle} background: #cbd5e1; color: #475569; font-size: 0.7rem; font-weight: bold; display: flex; justify-content: center; align-items: center;">
-              Libre (${remainingPct.toFixed(0)}%)
+            <div style="width: ${latPct}%; height: 100%; background: #334155; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 4px;" title="Nuevo Sobrante Resultante: ${subLateral.subMaterialId}">
+              <span style="color: #38bdf8; font-size: 0.8rem; font-family: monospace;">✂️ ${subLateral.subMaterialId}</span>
+              <span style="font-size: 0.7rem; color: #cbd5e1;">${subLateral.width}W x ${subLateral.cells}C</span>
+            </div>`;
+        } else if (latPct > 0) {
+          html += `
+            <div style="width: ${latPct}%; height: 100%; background: #0f172a; opacity: 0.5; color: #94a3b8; font-size: 0.65rem; display: flex; justify-content: center; align-items: center; text-align: center;">
+              Merma (${latPct.toFixed(0)}%)
+            </div>`;
+        }
+
+        html += `</div>`;
+
+        // SUB-REMANENTE 2 (INFERIOR: RECTÁNGULO GRIS OSCURO CON BORDE PUNTEADO)
+        const bottomPct = Math.max(0, 100 - usedCellsPct);
+        if (subBottom) {
+          html += `
+            <div style="width: 100%; height: ${bottomPct}%; background: #334155; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; justify-content: center; align-items: center; gap: 8px;" title="Nuevo Sobrante Resultante: ${subBottom.subMaterialId}">
+              <span style="color: #38bdf8; font-size: 0.8rem; font-family: monospace;">✂️ ${subBottom.subMaterialId}</span>
+              <span style="font-size: 0.7rem; color: #cbd5e1;">(${subBottom.width}W x ${subBottom.cells}C)</span>
+            </div>`;
+        } else if (bottomPct > 0) {
+          html += `
+            <div style="width: 100%; height: ${bottomPct}%; background: #0f172a; opacity: 0.5; color: #94a3b8; font-size: 0.65rem; display: flex; justify-content: center; align-items: center;">
+              Merma (${bottomPct.toFixed(0)}%)
             </div>`;
         }
 
         html += `</div></div>`;
       });
+
+      if (assignmentsToRender.length > RENDER_LIMIT) {
+        html += `<p style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 10px; background: #f8fafc; border-radius: 4px;">
+          ℹ️ Mostrando los primeros <b>${RENDER_LIMIT}</b> sobrantes de <b>${assignmentsToRender.length}</b> calculados. Al hacer clic en <b>Confirmar</b>, todas las asignaciones se guardarán en la base de datos.
+        </p>`;
+      }
     } else if (filterHighResidualOnly && currentProposal.assignments.length > 0) {
       html += `<p style="color: #64748b; font-style: italic; padding: 10px;">No hay sobrantes asignados con residuo mayor al 20%.</p>`;
     }
 
-    // 2. ÓRDENES SIN SOBRANTE AUTOMÁTICO
     if (currentProposal.unassignedOrders.length > 0 && !filterHighResidualOnly) {
       html += `<h4 style="color: #dc2626; margin-top: 20px; margin-bottom: 8px;">Ordenes sin asignación encontrada (${currentProposal.unassignedOrders.length})</h4>`;
 
@@ -332,7 +623,9 @@ const ValidatorView = (function () {
         </thead>
         <tbody>`;
 
-      currentProposal.unassignedOrders.forEach((u, index) => {
+      const unassignedToDraw = currentProposal.unassignedOrders.slice(0, 50);
+
+      unassignedToDraw.forEach((u, index) => {
         html += `
           <tr style="border-bottom: 1px solid #fee2e2;">
             <td style="padding: 6px; font-weight: bold; font-family: monospace;">${u.orderId}</td>
@@ -350,6 +643,25 @@ const ValidatorView = (function () {
 
     html += `</div>`;
     output.innerHTML = html;
+  }
+
+  function resetQueue() {
+    pendingOrders = [];
+    currentProposal = null;
+    loadedFileSignature = null;
+
+    const fileInput = document.getElementById("file-orders-csv");
+    const loadBtn = document.getElementById("btn-load-csv");
+    if (fileInput) {
+      fileInput.disabled = false;
+      fileInput.value = "";
+    }
+    if (loadBtn) {
+      loadBtn.disabled = false;
+    }
+
+    renderProposalVisual();
+    App.showToast("Lista y controles reiniciados.", "info");
   }
 
   function removeAssignmentGroup(assignIdx) {
@@ -628,31 +940,27 @@ const ValidatorView = (function () {
     const modalHtml = `
       <div id="modal-batch-confirm" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div style="background: #fff; width: 90%; max-width: 650px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-          
-          <!-- CABECERA (FIJA) -->
           <div style="flex-shrink: 0;">
-            <h3 style="margin-top: 0; color: #1e293b;">Resumen de Asignación por ordenes</h3>
+            <h3 style="margin-top: 0; color: #1e293b;">📋 Resumen de Asignación por Lotes</h3>
             <p style="font-size: 0.85rem; color: #475569; margin-bottom: 12px;">
-              A continuación se presenta el balance de las ordenes. Todas las órdenes con sobrante asignado serán procesadas en la base de datos.
+              A continuación se presenta el balance del lote. Todas las órdenes con sobrante asignado serán procesadas en la base de datos.
             </p>
           </div>
 
-          <!-- CUERPO SCROLLABLE PARA MUCHAS ÓRDENES -->
           <div style="flex: 1; overflow-y: auto; padding-right: 6px; margin-bottom: 16px;">
             ${incompletePrefixes.length > 0 ? `
               <div style="background: #fefce8; border: 1px solid #fef08a; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 0.8rem;">
-                <strong style="color: #854d0e;">⚠️ Ordenes Incompletas:</strong>
+                <strong style="color: #854d0e;">⚠️ Lotes Incompletos:</strong>
                 <ul style="margin: 6px 0 0 18px; padding: 0; color: #991b1b; max-height: 150px; overflow-y: auto;">${incompleteListHtml}</ul>
               </div>
             ` : ''}
 
             <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px; border-radius: 6px; font-size: 0.8rem;">
-              <strong style="color: #166534;">✅ Ordenes Completas:</strong>
+              <strong style="color: #166534;">✅ Lotes Completos:</strong>
               <ul style="margin: 6px 0 0 18px; padding: 0; color: #15803d; max-height: 200px; overflow-y: auto;">${completeListHtml}</ul>
             </div>
           </div>
 
-          <!-- PIE DE PÁGINA / BOTONES (FIJO) -->
           <div style="flex-shrink: 0; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-batch-confirm').remove()">
               Cancelar / Revisar
@@ -661,7 +969,6 @@ const ValidatorView = (function () {
               Confirmar y Guardar Todo
             </button>
           </div>
-
         </div>
       </div>
     `;
@@ -685,14 +992,14 @@ const ValidatorView = (function () {
       return;
     }
 
-    App.showLoader("Guardando asignaciones de ordenes...");
+    App.showLoader("Guardando asignaciones e inventario de sobrantes...");
 
     try {
       const res = await GasAPI.send("commitAssignments", { assignments: assignmentsToSave });
       App.hideLoader();
 
       if (res && res.success) {
-        App.showToast("¡Asignaciones confirmadas e inventario actualizado con éxito!", "success");
+        App.showToast("¡Asignaciones confirmadas e inventario de sobrantes actualizado!", "success");
         resetQueue();
         await App.refreshDatabase();
       } else {
@@ -705,6 +1012,7 @@ const ValidatorView = (function () {
     }
   }
 
+  // ACCIONES DE STANDBY: REPROCESAR O ELIMINAR REGISTROS
   function openStandbyModal() {
     const standbyList = App.getDbTable("tbStandby") || [];
     const activeStandby = standbyList.filter((s) => s.STATUS !== "RESOLVED" && s.STATUS !== "ELIMINADO");
@@ -723,19 +1031,19 @@ const ValidatorView = (function () {
                 <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MEDIDAS</th>
                 <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MOTIVO</th>
                 <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">FECHA STANDBY</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ESTATUS</th>
+                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ACCIONES</th>
               </tr>
             </thead>
             <tbody>`;
 
-      activeStandby.forEach((row) => {
+      activeStandby.forEach((row, idx) => {
         const orderId = String(row.ORDER_ID || row.orderId || "N/A");
         const pcnId = row.PCN_ID || row.pcnId || "N/A";
         const width = row.WIDTH || row.width || "0";
         const cells = row.CELLS || row.cells || "0";
         const reason = row.REASON || row.reason || "STANDBY";
         const fecha = row.FECHA_STANDBY || row.FECHA || "N/A";
-        const status = row.STATUS || row.status || "STANDBY";
+        const stId = row.STANDBY_ID || row.standbyKey || "";
 
         tableContent += `
           <tr style="border-bottom: 1px solid #e2e8f0;">
@@ -744,7 +1052,14 @@ const ValidatorView = (function () {
             <td style="padding: 8px;">${width}W x ${cells}C</td>
             <td style="padding: 8px;"><span class="badge" style="background: #fef3c7; color: #b45309;">${reason}</span></td>
             <td style="padding: 8px;">${fecha}</td>
-            <td style="padding: 8px;"><span class="badge" style="background: #e0f2fe; color: #0369a1;">${status}</span></td>
+            <td style="padding: 8px; display: flex; gap: 4px;">
+              <button class="btn btn-sm btn-primary" onclick="ValidatorView.reprocessStandbyItem('${orderId}', '${pcnId}', ${width}, ${cells}, '${stId}')" title="Cargar a cola de asignación">
+                🔄 Procesar
+              </button>
+              <button class="btn btn-sm btn-outline-danger" onclick="ValidatorView.deleteStandbyItem('${stId}', '${orderId}')" title="Eliminar de Standby">
+                🗑️
+              </button>
+            </td>
           </tr>`;
       });
 
@@ -755,10 +1070,10 @@ const ValidatorView = (function () {
       <div id="modal-standby-popup" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div style="background: #fff; width: 90%; max-width: 900px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">Órdenes pendientes</h3>
+            <h3 style="margin: 0;">Órdenes pendientes (Standby)</h3>
             <div style="display: flex; gap: 10px;">
               <button type="button" class="btn btn-success" style="font-size: 0.8rem;" onclick="ValidatorView.exportStandbyToCSV()">
-                Exportar
+                Exportar CSV
               </button>
               <button type="button" onclick="document.getElementById('modal-standby-popup').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
             </div>
@@ -774,6 +1089,48 @@ const ValidatorView = (function () {
     const existing = document.getElementById("modal-standby-popup");
     if (existing) existing.remove();
     document.body.insertAdjacentHTML("beforeend", modalHtml);
+  }
+
+  async function reprocessStandbyItem(orderId, pcnId, width, cells, standbyId) {
+    if (pendingOrders.some(o => String(o.ORDER_ID || o.orderId) === String(orderId))) {
+      App.showToast(`La orden ${orderId} ya está en la cola activa.`, "warning");
+      return;
+    }
+
+    const nowFormatted = new Date().toLocaleString("en-US", { timeZone: "UTC" });
+    pendingOrders.push({
+      ORDER_ID: orderId,
+      ORDER_DATE: nowFormatted,
+      PCN_ID: pcnId,
+      WIDTH: Number(width),
+      CELLS: Number(cells),
+    });
+
+    if (standbyId) {
+      await GasAPI.send("removeFromStandby", { standbyIds: [standbyId] });
+    }
+
+    const pop = document.getElementById("modal-standby-popup");
+    if (pop) pop.remove();
+
+    App.showToast(`Orden ${orderId} agregada de Standby a la cola activa.`, "success");
+    processProposalAsync();
+  }
+
+  async function deleteStandbyItem(standbyId, orderId) {
+    if (!confirm(`¿Deseas eliminar la orden ${orderId} de Standby?`)) return;
+
+    App.showLoader("Eliminando de Standby...");
+    const res = await GasAPI.send("removeFromStandby", { standbyIds: [standbyId] });
+    App.hideLoader();
+
+    if (res && res.success) {
+      App.showToast(`Orden ${orderId} eliminada de Standby.`, "success");
+      await App.refreshDatabase();
+      openStandbyModal();
+    } else {
+      App.showToast("Error eliminando de Standby: " + (res?.message || "Error desconocido"), "error");
+    }
   }
 
   function exportStandbyToCSV() {
@@ -970,6 +1327,8 @@ const ValidatorView = (function () {
     removeAssignmentGroup: removeAssignmentGroup,
     commitAssignments: commitAssignments,
     openStandbyModal: openStandbyModal,
+    reprocessStandbyItem: reprocessStandbyItem,
+    deleteStandbyItem: deleteStandbyItem,
     exportStandbyToCSV: exportStandbyToCSV,
     openAssignmentsModal: openAssignmentsModal,
     exportAssignmentsToCSV: exportAssignmentsToCSV,
