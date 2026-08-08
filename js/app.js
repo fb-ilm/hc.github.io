@@ -249,12 +249,14 @@ function logout() {
     const tabVal = document.getElementById("tab-validator");
     const tabSup = document.getElementById("tab-supervisor");
     const tabOpt = document.getElementById("tab-optimizer");
+    const tabCut = document.getElementById("tab-cutter");
     const tabAdm = document.getElementById("tab-admin");
 
     // Reglas de visibilidad de Tabs basadas en roles
     tabVal.style.display = (role === "Validador" || role === "Manager" || role === "Admin") ? "block" : "none";
     tabSup.style.display = (role === "Supervisor" || role === "Manager" || role === "Admin") ? "block" : "none";
     tabOpt.style.display = (role === "Optimizador" || role === "Manager" || role === "Admin") ? "block" : "none";
+    if (tabCut) tabCut.style.display = "block";
     tabAdm.style.display = (role === "Admin") ? "block" : "none";
 
     // Seleccionar la vista inicial según el rol
@@ -275,6 +277,7 @@ function logout() {
       if (viewId === "validator-view") ValidatorView.render(targetPanel);
       else if (viewId === "supervisor-view") SupervisorView.render(targetPanel);
       else if (viewId === "optimizer-view") OptimizerView.render(targetPanel);
+      else if (viewId === "cutter-view") CutterView.render(targetPanel);
       else if (viewId === "admin-view") AdminView.render(targetPanel);
     }
 
