@@ -212,6 +212,8 @@ const CutterView = (function () {
     layoutGraphicHtml += `</div>`;
 
     // SUB-REMANENTE INFERIOR (SUB2 O SUB1)
+
+    
     const bottomPct = Math.max(0, 100 - usedCellsPct);
     if (subBottom) {
       const subId = subBottom.SUB_MATERIAL_ID || subBottom.subMaterialId;
