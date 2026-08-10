@@ -5,7 +5,7 @@
 
 const CONFIG = {
   // Reemplaza esta URL con la URL de tu Web App desplegada en Google Apps Script
-  GAS_ENDPOINT: "https://script.google.com/macros/s/AKfycbw2zEawSg-jVzat9E5b6du9vcuWxEXvPJUAs-tnxyJVTSK8r-PN1CbP0uJj9Y4KGwPL2Q/exec",
+  GAS_ENDPOINT: "https://script.google.com/macros/s/AKfycbyAOX_mOPxfMTbVGADLhLXOvVRgalRX8p6DGHbwo_SNvvu84CaOtmcn-rryIhw9VcwRmw/exec",
   
   // Tiempos de sesión e inactividad (1 Hora = 3,600,000 ms)
   SESSION_TIMEOUT_MS: 60 * 60 * 1000,
