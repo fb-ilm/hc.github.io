@@ -423,50 +423,44 @@ const CutterView = (function () {
     }
   }
 
-  function printZebraLabel4x1(subItem) {
-    const subId = subItem.subMaterialId;
-    const pcn = subItem.pcnId || 'N/A';
-    const width = subItem.width || 0;
-    const cells = subItem.cells || 0;
-    const rack = subItem.rack || '';
-    const loc = subItem.loc || '';
-    const dateStr = new Date().toLocaleDateString();
-
-    const zplCommand = `
-^XA
-^PW800
-^LL200
-^FO30,20^A0N,28,28^FDSUB-REMANENTE GENERADO^FS
-^FO30,55^A0N,38,38^FDID: ${subId}^FS
-^FO30,100^A0N,26,26^FDPCN: ${pcn}^FS
-^FO30,130^A0N,26,26^FDMEDIDAS: ${width}W x ${cells}C^FS
-^FO30,160^A0N,22,22^FDUBICACION: ${rack}-${loc} | FECHA: ${dateStr}^FS
-^FO460,30^BY3,2,80^BCN,90,Y,N,N^FD${subId}^FS
-^XZ`;
-
+  // Obtener la IP ingresada por el usuario o usar una guardada en localStorage
+  function getTargetPrinterIp() {
+    return document.getElementById("input-printer-ip")?.value.trim() 
+        || localStorage.getItem("cutter_printer_ip") 
+        || "192.168.1.150";
+  }
+  
+  async function printZebraLabel4x1(subId, parentId, pcn, w, c, rack, loc) {
+    const targetIp = getTargetPrinterIp();
+  
+    // Guardar la IP para que el usuario no tenga que escribirla de nuevo
+    localStorage.setItem("cutter_printer_ip", targetIp);
+  
+    App.showLoader(`Enviando impresión a la IP ${targetIp}...`);
+  
     try {
-      if (window.ZebraPrintService) {
-        window.ZebraPrintService.send(zplCommand);
+      // Se envía la IP dinámica ingresada por el usuario al backend
+      const res = await GasAPI.send("printZplDirectToIP", {
+        printerIp: targetIp, // 👈 La IP escrita por el usuario
+        subId: subId,
+        parentId: parentId,
+        pcn: pcn,
+        width: w,
+        cells: c,
+        rack: rack,
+        loc: loc
+      });
+  
+      App.hideLoader();
+  
+      if (res && res.success) {
+        App.showToast(`🖨️ Etiqueta enviada exitosamente a la impresora en ${targetIp}`, "success");
       } else {
-        const printWindow = window.open("", "_blank", "width=400,height=300");
-        if (printWindow) {
-          printWindow.document.write(`
-            <html>
-              <head><title>Impresión Zebra - ${subId}</title></head>
-              <body style="font-family: monospace; padding: 20px;">
-                <h4>🖨️ Comando ZPL Enviado (4x1"):</h4>
-                <pre style="background: #f1f5f9; padding: 10px; border-radius: 4px; font-size: 0.8rem;">${zplCommand}</pre>
-                <script>window.print(); setTimeout(() => window.close(), 1000);</script>
-              </body>
-            </html>
-          `);
-          printWindow.document.close();
-        }
+        App.showToast("Error de impresión: " + (res?.message || "No se pudo conectar a la IP"), "error");
       }
-      App.showToast(`Etiqueta Zebra generada para ${subId}`, "success");
     } catch (e) {
-      console.error("Error al imprimir etiqueta Zebra:", e);
-      App.showToast(`No se pudo conectar con la impresora Zebra para ${subId}`, "warning");
+      App.hideLoader();
+      App.showToast("Error de comunicación: " + e.message, "error");
     }
   }
 
