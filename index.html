@@ -11,6 +11,8 @@
 </head>
 <body>
 
+    <!-- Agregar dentro de index.html justo antes de </body> -->
+
     <!-- PANTALLA / OVERLAY DE CARGA -->
     <div id="loading-overlay" class="loading-overlay hidden">
     <div class="loader-card">
@@ -131,6 +133,7 @@
         <button class="nav-tab" data-view="supervisor-view" id="tab-supervisor">Cargas de datos</button>
         <button class="nav-tab" data-view="optimizer-view" id="tab-optimizer">Reasignación</button>
         <button class="nav-tab" data-view="cutter-view" id="tab-cutter">Estación de corte</button> <!-- 👈 AGREGAR ESTA LÍNEA -->
+        <button class="nav-tab" data-view="picker-view" id="tab-picker">Picker</button>
         <button class="nav-tab" data-view="admin-view" id="tab-admin">Administración DB</button>
     </nav>
 
@@ -140,6 +143,7 @@
         <div id="supervisor-view" class="view-panel hidden"></div>
         <div id="optimizer-view" class="view-panel hidden"></div>
         <div id="cutter-view" class="view-panel hidden"></div> <!-- 👈 AGREGAR ESTA LÍNEA -->
+        <div id="picker-view" class="view-panel hidden"></div>
         <div id="admin-view" class="view-panel hidden"></div>
     </main>
 
@@ -169,6 +173,7 @@
     <script src="js/views/validator.js"></script>
     <script src="js/views/supervisor.js"></script>
     <script src="js/views/optimizer.js"></script>
+    <script src="js/views/mobile_picker.js"></script>
     <script src="js/views/cutter.js"></script>
     <script src="js/views/admin.js"></script>
     <script src="js/app.js"></script>
