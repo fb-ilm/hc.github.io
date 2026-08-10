@@ -8,6 +8,8 @@ const ValidatorView = (function () {
   let currentProposal = null;
   let loadedFileSignature = null;
   let filterHighResidualOnly = false;
+  let filterAssignedOrderId = "";
+  let filterUnassignedOrderId = "";
 
   function render(container) {
     container.innerHTML = `
@@ -32,7 +34,6 @@ const ValidatorView = (function () {
       <div style="display: grid; grid-template-columns: 400px 1fr; gap: 10px;">
 
         <!-- PANEL DE ENTRADA -->
-
         <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <h3>Ingreso de datos</h3>
@@ -41,7 +42,6 @@ const ValidatorView = (function () {
           <hr style="margin: 12px 0;">
 
           <!-- MODO MANUAL -->
-
           <form id="form-single-order" onsubmit="return false;" style="margin-bottom: 20px;">
             <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Ingreso manual</h4>
             <div class="form-group">
@@ -68,7 +68,6 @@ const ValidatorView = (function () {
           </form>
 
           <!-- MODO MASIVO CSV -->
-
           <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px dashed #cbd5e1;">
             <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Carga de datos</h4>
             <p style="font-size: 0.72rem; color: #64748b; margin-bottom: 8px;">
@@ -82,7 +81,6 @@ const ValidatorView = (function () {
         </div>
 
         <!-- PANEL DE CARRITO Y VISUALIZACIÓN GRÁFICA -->
-
         <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
             <div style="display: flex; align-items: center; gap: 15px;">
@@ -108,6 +106,16 @@ const ValidatorView = (function () {
 
   function toggleResidualFilter(checked) {
     filterHighResidualOnly = checked;
+    renderProposalVisual();
+  }
+
+  function filterAssignedOrders(query) {
+    filterAssignedOrderId = String(query || "").trim().toLowerCase();
+    renderProposalVisual();
+  }
+
+  function filterUnassignedOrders(query) {
+    filterUnassignedOrderId = String(query || "").trim().toLowerCase();
     renderProposalVisual();
   }
 
@@ -168,10 +176,8 @@ const ValidatorView = (function () {
       document.getElementById("file-orders-csv").disabled = true;
       document.getElementById("btn-load-csv").disabled = true;
 
-      // Pop-up con estatus claro para el renderizado
       App.showLoader(`Calculando propuesta óptima para ${pendingOrders.length} órdenes...`);
 
-      // Breve retardo para permitir que el loader aparezca en pantalla antes de calcular
       setTimeout(() => {
         processProposal();
         App.hideLoader();
@@ -207,7 +213,6 @@ const ValidatorView = (function () {
       
       App.showLoader("Generando vista previa de asignaciones...");
       
-      // Permitir que el navegador dibuje el mensaje antes de renderizar el HTML masivo xd
       setTimeout(() => {
         renderProposalVisual();
         App.hideLoader();
@@ -267,7 +272,7 @@ const ValidatorView = (function () {
         const totalGroups = orderGroups.length;
 
         function processNextChunk() {
-          const chunkSize = 10; // Reducido a 10 grupos por iteración para aligerar la carga por bloque
+          const chunkSize = 10;
           const end = Math.min(groupIndex + chunkSize, totalGroups);
 
           for (; groupIndex < end; groupIndex++) {
@@ -456,7 +461,6 @@ const ValidatorView = (function () {
     });
   }
 
-  // RENDERIZADO EFICIENTE CON LÍMITE INICIAL PARA EVITAR CONGELAR EL NAVEGADOR
   function renderProposalVisual() {
     const output = document.getElementById("proposal-output");
     const confirmBtn = document.getElementById("btn-confirm-commit");
@@ -474,8 +478,18 @@ const ValidatorView = (function () {
 
     let assignmentsToRender = currentProposal.assignments;
 
+    // Filtro Desperdicio > 20%
     if (filterHighResidualOnly) {
       assignmentsToRender = assignmentsToRender.filter(a => (a.residualPercentage || 0) > 20);
+    }
+
+    // REQUERIMIENTO 2: Filtro por ORDER_ID en Sobrantes Asignados
+    if (filterAssignedOrderId) {
+      assignmentsToRender = assignmentsToRender.filter(item => {
+        return item.orders.some(o => 
+          String(o.orderId || o.ORDER_ID || "").toLowerCase().includes(filterAssignedOrderId)
+        );
+      });
     }
 
     let html = `<div style="max-height: 580px; overflow-y: auto;">`;
@@ -483,14 +497,21 @@ const ValidatorView = (function () {
     if (assignmentsToRender.length > 0) {
       const totalCount = currentProposal.assignments.length;
       const filteredCount = assignmentsToRender.length;
-      const countLabel = filterHighResidualOnly ? `${filteredCount} de ${totalCount}` : `${totalCount}`;
+      const countLabel = (filterHighResidualOnly || filterAssignedOrderId) ? `${filteredCount} de ${totalCount}` : `${totalCount}`;
 
-      html += `<h4 style="color: #16a34a; margin-bottom: 12px;">Sobrantes Asignados (${countLabel})</h4>`;
+      html += `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap;">
+          <h4 style="color: #16a34a; margin: 0;">Sobrantes Asignados (${countLabel})</h4>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 0.78rem; font-weight: bold; color: #475569; margin: 0;">🔍 Buscar ORDER_ID:</label>
+            <input type="text" class="form-control" style="font-size: 0.8rem; height: 30px; width: 190px; font-family: monospace;" 
+              placeholder="Filtra por orden..." 
+              value="${filterAssignedOrderId}" 
+              oninput="ValidatorView.filterAssignedOrders(this.value)">
+          </div>
+        </div>`;
 
-      const RENDER_LIMIT = 60;
-      const itemsToDraw = assignmentsToRender.slice(0, RENDER_LIMIT);
-
-      itemsToDraw.forEach((item) => {
+      assignmentsToRender.forEach((item) => {
         const assignIdx = currentProposal.assignments.indexOf(item);
         const matIdClean = item.materialId || item["MATERIAL_ID"] || item.MATERIAL_ID || "N/A";
         const origWidth = Number(item.originalWidth || item.WIDTH || 1);
@@ -501,7 +522,6 @@ const ValidatorView = (function () {
         const orientation = item.orientation || "WIDTH";
         const resPct = item.residualPercentage !== undefined ? item.residualPercentage : 0;
         
-        // Garantizar lectura del arreglo
         const subRems = item.generatedSubRemanents || [];
 
         const badgeColor =
@@ -549,10 +569,10 @@ const ValidatorView = (function () {
               </div>
             </div>
 
-            <!-- CONTENEDOR GEOMÉTRICO (REPRESENTACIÓN FIEL DEL DIAGRAMA) -->
+            <!-- CONTENEDOR GEOMÉTRICO -->
             <div style="position: relative; width: 100%; height: 180px; background: #0f172a; border: 2px solid #475569; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; padding: 3px; gap: 3px;">
               
-              <!-- BLOQUE SUPERIOR (ÓRDENES + SUB-REMANENTE LATERAL) -->
+              <!-- BLOQUE SUPERIOR -->
               <div style="display: flex; width: 100%; height: ${Math.min(usedCellsPct, 100)}%; gap: 3px; overflow: hidden;">
                 
                 <!-- COLUMNA DE ÓRDENES -->
@@ -577,7 +597,7 @@ const ValidatorView = (function () {
 
         html += `</div>`;
 
-        // SUB-REMANENTE 1 (LATERAL: RECTÁNGULO GRIS OSCURO CON BORDE PUNTEADO)
+        // SUB-REMANENTE 1 (LATERAL)
         const latPct = Math.max(0, 100 - usedWidthPct);
         if (subLateral) {
           html += `
@@ -594,7 +614,7 @@ const ValidatorView = (function () {
 
         html += `</div>`;
 
-        // SUB-REMANENTE 2 (INFERIOR: RECTÁNGULO GRIS OSCURO CON BORDE PUNTEADO)
+        // SUB-REMANENTE 2 (INFERIOR)
         const bottomPct = Math.max(0, 100 - usedCellsPct);
         if (subBottom) {
           html += `
@@ -612,45 +632,67 @@ const ValidatorView = (function () {
         html += `</div></div>`;
       });
 
-      if (assignmentsToRender.length > RENDER_LIMIT) {
-        html += `<p style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 10px; background: #f8fafc; border-radius: 4px;">
-          ℹ️ Mostrando los primeros <b>${RENDER_LIMIT}</b> sobrantes de <b>${assignmentsToRender.length}</b> calculados. Al hacer clic en <b>Confirmar</b>, todas las asignaciones se guardarán en la base de datos.
-        </p>`;
-      }
-    } else if (filterHighResidualOnly && currentProposal.assignments.length > 0) {
-      html += `<p style="color: #64748b; font-style: italic; padding: 10px;">No hay sobrantes asignados con residuo mayor al 20%.</p>`;
+    } else if (filterHighResidualOnly || filterAssignedOrderId) {
+      html += `<p style="color: #64748b; font-style: italic; padding: 10px;">No hay sobrantes asignados que coincidan con los filtros aplicados.</p>`;
     }
 
+    // REQUERIMIENTO 1: Mapeo Completo y Filtro por ORDER_ID para Órdenes Sin Asignar
     if (currentProposal.unassignedOrders.length > 0 && !filterHighResidualOnly) {
-      html += `<h4 style="color: #dc2626; margin-top: 20px; margin-bottom: 8px;">Ordenes sin asignación encontrada (${currentProposal.unassignedOrders.length})</h4>`;
+      let unassignedList = currentProposal.unassignedOrders;
 
-      html += `<table style="width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-bottom: 12px;">
-        <thead>
-          <tr style="background: #fef2f2; color: #991b1b; text-align: left;">
-            <th style="padding: 6px;">ORDER_ID</th>
-            <th style="padding: 6px;">PCN</th>
-            <th style="padding: 6px;">MEDIDAS</th>
-            <th style="padding: 6px;">ACCIONES MANUALES</th>
-          </tr>
-        </thead>
-        <tbody>`;
+      if (filterUnassignedOrderId) {
+        unassignedList = unassignedList.filter(u => 
+          String(u.orderId || u.ORDER_ID || "").toLowerCase().includes(filterUnassignedOrderId)
+        );
+      }
 
-      const unassignedToDraw = currentProposal.unassignedOrders.slice(0, 50);
+      const totalUnassigned = currentProposal.unassignedOrders.length;
+      const countUnassignedLabel = filterUnassignedOrderId ? `${unassignedList.length} de ${totalUnassigned}` : `${totalUnassigned}`;
 
-      unassignedToDraw.forEach((u, index) => {
-        html += `
-          <tr style="border-bottom: 1px solid #fee2e2;">
-            <td style="padding: 6px; font-weight: bold; font-family: monospace;">${u.orderId}</td>
-            <td style="padding: 6px;">${u.pcnId}</td>
-            <td style="padding: 6px;">${u.width} W x ${u.cells} C</td>
-            <td style="padding: 6px; display: flex; gap: 6px;">
-              <button class="btn btn-sm btn-primary" onclick="ValidatorView.openSearchModalForOrder(${index})">Buscar en sistema</button>
-              <button class="btn btn-sm btn-outline-danger" onclick="ValidatorView.removeUnassignedOrder(${index})">Eliminar</button>
-            </td>
-          </tr>`;
-      });
+      html += `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 24px; margin-bottom: 8px; gap: 10px; flex-wrap: wrap;">
+          <h4 style="color: #dc2626; margin: 0;">Órdenes sin asignación encontrada (${countUnassignedLabel})</h4>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 0.78rem; font-weight: bold; color: #475569; margin: 0;">🔍 Buscar ORDER_ID:</label>
+            <input type="text" class="form-control" style="font-size: 0.8rem; height: 30px; width: 190px; font-family: monospace;" 
+              placeholder="Filtra por orden..." 
+              value="${filterUnassignedOrderId}" 
+              oninput="ValidatorView.filterUnassignedOrders(this.value)">
+          </div>
+        </div>`;
 
-      html += `</tbody></table>`;
+      if (unassignedList.length === 0) {
+        html += `<p style="color: #64748b; font-style: italic; padding: 10px;">No hay órdenes no asignadas que coincidan con el término "${filterUnassignedOrderId}".</p>`;
+      } else {
+        html += `<div style="max-height: 380px; overflow-y: auto; border: 1px solid #fee2e2; border-radius: 4px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+            <thead>
+              <tr style="background: #fef2f2; color: #991b1b; text-align: left; position: sticky; top: 0; z-index: 1;">
+                <th style="padding: 6px;">ORDER_ID</th>
+                <th style="padding: 6px;">PCN</th>
+                <th style="padding: 6px;">MEDIDAS</th>
+                <th style="padding: 6px;">ACCIONES MANUALES</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+        // CORRECCIÓN: Renderizado completo sin truncar con .slice(0, 50)
+        unassignedList.forEach((u) => {
+          const rawIndex = currentProposal.unassignedOrders.indexOf(u);
+          html += `
+            <tr style="border-bottom: 1px solid #fee2e2;">
+              <td style="padding: 6px; font-weight: bold; font-family: monospace; color: #dc2626;">${u.orderId}</td>
+              <td style="padding: 6px;">${u.pcnId}</td>
+              <td style="padding: 6px;">${u.width} W x ${u.cells} C</td>
+              <td style="padding: 6px; display: flex; gap: 6px;">
+                <button class="btn btn-sm btn-primary" onclick="ValidatorView.openSearchModalForOrder(${rawIndex})">Buscar en sistema</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="ValidatorView.removeUnassignedOrder(${rawIndex})">Eliminar</button>
+              </td>
+            </tr>`;
+        });
+
+        html += `</tbody></table></div>`;
+      }
     }
 
     html += `</div>`;
@@ -661,6 +703,8 @@ const ValidatorView = (function () {
     pendingOrders = [];
     currentProposal = null;
     loadedFileSignature = null;
+    filterAssignedOrderId = "";
+    filterUnassignedOrderId = "";
 
     const fileInput = document.getElementById("file-orders-csv");
     const loadBtn = document.getElementById("btn-load-csv");
@@ -974,7 +1018,7 @@ const ValidatorView = (function () {
             </div>
           </div>
 
-          <!-- BOTONES CON LAS 3 OPCIONES SOLICITADAS -->
+          <!-- BOTONES CON LAS 3 OPCIONES -->
           <div style="flex-shrink: 0; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-batch-confirm').remove()">
               Cancelar / Revisar
@@ -995,7 +1039,6 @@ const ValidatorView = (function () {
     if (existing) existing.remove();
     document.body.insertAdjacentHTML("beforeend", modalHtml);
 
-    // OPCIÓN 2: GUARDAR COMPLETAS
     document.getElementById("btn-save-complete-only").onclick = async () => {
       document.getElementById("modal-batch-confirm").remove();
       
@@ -1014,7 +1057,6 @@ const ValidatorView = (function () {
       await executeCommitProcess(completeAssignments);
     };
 
-    // OPCIÓN 3: GUARDAR TODO
     document.getElementById("btn-save-all").onclick = async () => {
       document.getElementById("modal-batch-confirm").remove();
       await executeCommitProcess(currentProposal.assignments);
@@ -1027,7 +1069,24 @@ const ValidatorView = (function () {
       return;
     }
 
-    // Generar ID_ASIGNACIÓN Único
+    const formattedAssignments = assignmentsToSave.map(item => {
+      const subRems = (item.generatedSubRemanents || []).map(sub => {
+        let typeStr = sub.type || sub.TYPE;
+        if (!typeStr) {
+          typeStr = String(sub.subMaterialId || "").includes("-SUB2") ? 'BOTTOM' : 'LATERAL';
+        }
+        return {
+          ...sub,
+          type: typeStr
+        };
+      });
+
+      return {
+        ...item,
+        generatedSubRemanents: subRems
+      };
+    });
+
     const now = new Date();
     const timestampStr = now.getFullYear() +
       String(now.getMonth() + 1).padStart(2, '0') +
@@ -1043,7 +1102,7 @@ const ValidatorView = (function () {
     try {
       const res = await GasAPI.send("commitAssignments", { 
         idAsignacion: idAsignacion,
-        assignments: assignmentsToSave 
+        assignments: formattedAssignments 
       });
 
       App.hideLoader();
@@ -1062,11 +1121,9 @@ const ValidatorView = (function () {
     }
   }
 
-  // MODAL PARA ACTIVAR ASIGNACIONES POR ID_ASIGNACION
   function openActivationModal() {
     const assignments = App.getDbTable("tbAsignaciones") || [];
     
-    // Obtener lista de IDs de asignación únicos en estatus 'ASIGNADO'
     const pendingActivation = {};
     assignments.forEach(a => {
       const st = String(a.STATUS || a.status || "").trim();
@@ -1164,7 +1221,6 @@ const ValidatorView = (function () {
     }
   }
 
-  // ACCIONES DE STANDBY: REPROCESAR O ELIMINAR REGISTROS
   function openStandbyModal() {
     const standbyList = App.getDbTable("tbStandby") || [];
     const activeStandby = standbyList.filter((s) => s.STATUS !== "RESOLVED" && s.STATUS !== "ELIMINADO");
@@ -1188,7 +1244,7 @@ const ValidatorView = (function () {
             </thead>
             <tbody>`;
 
-      activeStandby.forEach((row, idx) => {
+      activeStandby.forEach((row) => {
         const orderId = String(row.ORDER_ID || row.orderId || "N/A");
         const pcnId = row.PCN_ID || row.pcnId || "N/A";
         const width = row.WIDTH || row.width || "0";
@@ -1358,7 +1414,6 @@ const ValidatorView = (function () {
       return;
     }
 
-    // Extraer lista única de ID_ASIGNACION
     const idSet = new Set();
     assignments.forEach(row => {
       const idAsig = String(row.ID_ASIGNACION || row.idAsignacion || "").trim();
@@ -1374,7 +1429,6 @@ const ValidatorView = (function () {
       <div id="modal-assignments-popup" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div style="background: #fff; width: 90%; max-width: 1050px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
           
-          <!-- CABECERA Y FILTRO POR ID_ASIGNACION -->
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 15px; flex-wrap: wrap;">
             <div>
               <h3 style="margin: 0; color: #1e293b;">Historial de asignaciones</h3>
@@ -1396,9 +1450,7 @@ const ValidatorView = (function () {
             </div>
           </div>
 
-          <!-- CONTENEDOR DE TABLA -->
           <div id="container-assignments-table" style="flex: 1; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
-            <!-- Renderizado dinámico vía filterAssignmentsTable -->
           </div>
 
           <div style="text-align: right; margin-top: 12px; flex-shrink: 0;">
@@ -1412,7 +1464,6 @@ const ValidatorView = (function () {
     if (existing) existing.remove();
     document.body.insertAdjacentHTML("beforeend", modalHtml);
 
-    // Carga inicial (Todos los registros)
     filterAssignmentsTable("ALL");
   }
 
@@ -1543,6 +1594,8 @@ const ValidatorView = (function () {
   return {
     render: render,
     toggleResidualFilter: toggleResidualFilter,
+    filterAssignedOrders: filterAssignedOrders,
+    filterUnassignedOrders: filterUnassignedOrders,
     addSingleOrder: addSingleOrder,
     loadOrdersCSV: loadOrdersCSV,
     resetQueue: resetQueue,
