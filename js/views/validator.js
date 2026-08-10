@@ -14,25 +14,33 @@ const ValidatorView = (function () {
       <div class="view-header" style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
         <div>
           <h2>Asignación de remanentes</h2>
-          <p class="text-muted">Procesa órdenes y visualiza el acomodo en los remanentes.</p>
+          <p class="text-muted">Procesa órdenes, visualiza el acomodo y gestiona la activación de lotes.</p>
         </div>
         <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn btn-outline-success" onclick="ValidatorView.openActivationModal()">
+            ⚡ Activar lote asignado
+          </button>
           <button type="button" class="btn btn-outline-warning" onclick="ValidatorView.openStandbyModal()">
-            Ordenes pendientes
+            Órdenes pendientes
           </button>
           <button type="button" class="btn btn-outline-primary" onclick="ValidatorView.openAssignmentsModal()">
-            Ordenes asignadas
+            Órdenes asignadas
           </button>
         </div>
       </div>
 
       <div style="display: grid; grid-template-columns: 400px 1fr; gap: 10px;">
+
+        <!-- PANEL DE ENTRADA -->
+
         <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <h3>Ingreso de datos</h3>
             <button class="btn btn-sm btn-outline-danger" onclick="ValidatorView.resetQueue()" title="Limpiar todo">Reset</button>
           </div>
           <hr style="margin: 12px 0;">
+
+          <!-- MODO MANUAL -->
 
           <form id="form-single-order" onsubmit="return false;" style="margin-bottom: 20px;">
             <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Ingreso manual</h4>
@@ -59,6 +67,8 @@ const ValidatorView = (function () {
             </button>
           </form>
 
+          <!-- MODO MASIVO CSV -->
+
           <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px dashed #cbd5e1;">
             <h4 style="font-size: 0.85rem; margin-bottom: 8px;">Carga de datos</h4>
             <p style="font-size: 0.72rem; color: #64748b; margin-bottom: 8px;">
@@ -70,6 +80,8 @@ const ValidatorView = (function () {
             </button>
           </div>
         </div>
+
+        <!-- PANEL DE CARRITO Y VISUALIZACIÓN GRÁFICA -->
 
         <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -939,11 +951,12 @@ const ValidatorView = (function () {
 
     const modalHtml = `
       <div id="modal-batch-confirm" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
-        <div style="background: #fff; width: 90%; max-width: 650px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+        <div style="background: #fff; width: 90%; max-width: 680px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+          
           <div style="flex-shrink: 0;">
             <h3 style="margin-top: 0; color: #1e293b;">📋 Resumen de Asignación por Lotes</h3>
             <p style="font-size: 0.85rem; color: #475569; margin-bottom: 12px;">
-              A continuación se presenta el balance del lote. Todas las órdenes con sobrante asignado serán procesadas en la base de datos.
+              Selecciona el modo de guardado. Se generará un <b>ID de Asignación</b> único con estatus inicial <b>ASIGNADO</b>.
             </p>
           </div>
 
@@ -961,14 +974,19 @@ const ValidatorView = (function () {
             </div>
           </div>
 
+          <!-- BOTONES CON LAS 3 OPCIONES SOLICITADAS -->
           <div style="flex-shrink: 0; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-batch-confirm').remove()">
               Cancelar / Revisar
             </button>
-            <button type="button" class="btn btn-success" id="btn-proceed-commit-all">
-              Confirmar y Guardar Todo
+            <button type="button" class="btn btn-warning" id="btn-save-complete-only">
+              Guardar Completas
+            </button>
+            <button type="button" class="btn btn-success" id="btn-save-all">
+              Guardar Todo
             </button>
           </div>
+
         </div>
       </div>
     `;
@@ -977,13 +995,30 @@ const ValidatorView = (function () {
     if (existing) existing.remove();
     document.body.insertAdjacentHTML("beforeend", modalHtml);
 
-    const proceedBtn = document.getElementById("btn-proceed-commit-all");
-    if (proceedBtn) {
-      proceedBtn.onclick = async () => {
-        document.getElementById("modal-batch-confirm").remove();
-        await executeCommitProcess(currentProposal.assignments);
-      };
-    }
+    // OPCIÓN 2: GUARDAR COMPLETAS
+    document.getElementById("btn-save-complete-only").onclick = async () => {
+      document.getElementById("modal-batch-confirm").remove();
+      
+      const completeAssignments = currentProposal.assignments.filter(assignment => {
+        return assignment.orders.every(ord => {
+          const pref = String(ord.orderId || ord.ORDER_ID).substring(0, 10);
+          return completePrefixes.includes(pref);
+        });
+      });
+
+      if (completeAssignments.length === 0) {
+        App.showToast("No hay asignaciones pertenecientes a lotes 100% completos.", "warning");
+        return;
+      }
+
+      await executeCommitProcess(completeAssignments);
+    };
+
+    // OPCIÓN 3: GUARDAR TODO
+    document.getElementById("btn-save-all").onclick = async () => {
+      document.getElementById("modal-batch-confirm").remove();
+      await executeCommitProcess(currentProposal.assignments);
+    };
   }
 
   async function executeCommitProcess(assignmentsToSave) {
@@ -992,14 +1027,29 @@ const ValidatorView = (function () {
       return;
     }
 
-    App.showLoader("Guardando asignaciones e inventario de sobrantes...");
+    // Generar ID_ASIGNACIÓN Único
+    const now = new Date();
+    const timestampStr = now.getFullYear() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') + "-" +
+      String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') +
+      String(now.getSeconds()).padStart(2, '0');
+    
+    const idAsignacion = `ASIG-${timestampStr}`;
+
+    App.showLoader(`Guardando lote de asignaciones (${idAsignacion})...`);
 
     try {
-      const res = await GasAPI.send("commitAssignments", { assignments: assignmentsToSave });
+      const res = await GasAPI.send("commitAssignments", { 
+        idAsignacion: idAsignacion,
+        assignments: assignmentsToSave 
+      });
+
       App.hideLoader();
 
       if (res && res.success) {
-        App.showToast("¡Asignaciones confirmadas e inventario de sobrantes actualizado!", "success");
+        App.showToast(`¡Asignaciones guardadas con éxito! ID: ${idAsignacion}`, "success");
         resetQueue();
         await App.refreshDatabase();
       } else {
@@ -1009,6 +1059,108 @@ const ValidatorView = (function () {
     } catch (err) {
       App.hideLoader();
       App.showToast("Error en la comunicación con la base de datos: " + err.message, "error");
+    }
+  }
+
+  // MODAL PARA ACTIVAR ASIGNACIONES POR ID_ASIGNACION
+  function openActivationModal() {
+    const assignments = App.getDbTable("tbAsignaciones") || [];
+    
+    // Obtener lista de IDs de asignación únicos en estatus 'ASIGNADO'
+    const pendingActivation = {};
+    assignments.forEach(a => {
+      const st = String(a.STATUS || a.status || "").trim();
+      const asigId = String(a.ID_ASIGNACION || a.idAsignacion || "").trim();
+      
+      if (st === "ASIGNADO" && asigId) {
+        if (!pendingActivation[asigId]) {
+          pendingActivation[asigId] = {
+            idAsignacion: asigId,
+            fecha: a.RECORD_DATE || a.FECHA || "N/A",
+            totalOrders: 0
+          };
+        }
+        pendingActivation[asigId].totalOrders++;
+      }
+    });
+
+    const activeList = Object.values(pendingActivation);
+
+    let contentHtml = "";
+    if (activeList.length === 0) {
+      contentHtml = `<p style="color: #64748b; text-align: center; padding: 20px;">No hay lotes con estatus 'ASIGNADO' pendientes por activar.</p>`;
+    } else {
+      contentHtml = `
+        <div style="max-height: 380px; overflow-y: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+            <thead>
+              <tr style="background: #f1f5f9; text-align: left; position: sticky; top: 0;">
+                <th style="padding: 8px;">ID_ASIGNACIÓN</th>
+                <th style="padding: 8px;">FECHA REGISTRO</th>
+                <th style="padding: 8px;">ÓRDENES</th>
+                <th style="padding: 8px;">ACCIÓN</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+      activeList.forEach(item => {
+        contentHtml += `
+          <tr style="border-bottom: 1px solid #e2e8f0;">
+            <td style="padding: 8px; font-weight: bold; font-family: monospace; color: #2563eb;">${item.idAsignacion}</td>
+            <td style="padding: 8px;">${item.fecha}</td>
+            <td style="padding: 8px;">${item.totalOrders} órdenes</td>
+            <td style="padding: 8px;">
+              <button class="btn btn-sm btn-success" onclick="ValidatorView.executeActivation('${item.idAsignacion}')">
+                ⚡ Activar Lote
+              </button>
+            </td>
+          </tr>`;
+      });
+
+      contentHtml += `</tbody></table></div>`;
+    }
+
+    const modalHtml = `
+      <div id="modal-activation-popup" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
+        <div style="background: #fff; width: 90%; max-width: 650px; border-radius: 8px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0; color: #1e293b;">⚡ Activar ID_Asignación</h3>
+            <button type="button" onclick="document.getElementById('modal-activation-popup').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
+          </div>
+          <p style="font-size: 0.85rem; color: #475569; margin-bottom: 12px;">
+            Selecciona un lote de asignación para cambiar su estatus a <b>ACTIVADO</b> y liberarlo para la estación de corte.
+          </p>
+          ${contentHtml}
+          <div style="text-align: right; margin-top: 15px;">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-activation-popup').remove()">Cerrar</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const existing = document.getElementById("modal-activation-popup");
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML("beforeend", modalHtml);
+  }
+
+  async function executeActivation(idAsignacion) {
+    App.showLoader(`Activando asignación ${idAsignacion}...`);
+
+    try {
+      const res = await GasAPI.send("activateAssignmentGroup", { idAsignacion: idAsignacion });
+      App.hideLoader();
+
+      if (res && res.success) {
+        App.showToast(`Lote ${idAsignacion} activado con éxito.`, "success");
+        const pop = document.getElementById("modal-activation-popup");
+        if (pop) pop.remove();
+        await App.refreshDatabase();
+      } else {
+        App.showToast("Error activando asignación: " + (res?.message || "Error desconocido"), "error");
+      }
+    } catch (err) {
+      App.hideLoader();
+      App.showToast("Error al conectar con el servidor: " + err.message, "error");
     }
   }
 
@@ -1186,66 +1338,70 @@ const ValidatorView = (function () {
   function openAssignmentsModal() {
     const assignments = App.getDbTable("tbAsignaciones") || [];
 
-    let tableContent = "";
     if (assignments.length === 0) {
-      tableContent = `<p style="color: #64748b; text-align: center; padding: 20px;">No hay registros guardados.</p>`;
-    } else {
-      tableContent = `
-        <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
-          <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
-            <thead>
-              <tr style="background: #f1f5f9; text-align: left; position: sticky; top: 0; z-index: 1;">
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MATERIAL_ID</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">FECHA ASIGNACIÓN</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ORDER_ID</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">PCN_ID</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">UBICACIÓN</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MEDIDAS</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ESTATUS</th>
-              </tr>
-            </thead>
-            <tbody>`;
-
-      assignments.forEach((row) => {
-        const matId = row["MATERIAL_ID"] || row.MATERIAL_ID || row.materialId || "N/A";
-        const fecha = row.RECORD_DATE || row.FECHA || "N/A";
-        const orderId = String(row.ORDER_ID || row.orderId || "N/A");
-        const pcnId = row.PCN_ID || row.pcnId || "N/A";
-        const rack = row.RACK || row.rack || "N/A";
-        const loc = row.LOC || row.loc || "N/A";
-        const width = row.WIDTH || row.width || "0";
-        const cells = row.CELLS || row.cells || "0";
-        const status = row.STATUS;
-
-        tableContent += `
-          <tr style="border-bottom: 1px solid #e2e8f0;">
-            <td style="padding: 8px; font-weight: bold; font-family: monospace; color: #2563eb;">${matId}</td>
-            <td style="padding: 8px;">${fecha}</td>
-            <td style="padding: 8px; font-weight: bold; font-family: monospace;">${orderId}</td>
-            <td style="padding: 8px;">${pcnId}</td>
-            <td style="padding: 8px;">${rack}-${loc}</td>
-            <td style="padding: 8px;">${width}W x ${cells}C</td>
-            <td style="padding: 8px;"><span class="badge" style="background: #e0f2fe; color: #0369a1;">${status}</span></td>
-          </tr>`;
-      });
-
-      tableContent += `</tbody></table></div>`;
+      const emptyModalHtml = `
+        <div id="modal-assignments-popup" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
+          <div style="background: #fff; width: 90%; max-width: 900px; border-radius: 8px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <h3 style="margin: 0;">Historial de asignaciones</h3>
+              <button type="button" onclick="document.getElementById('modal-assignments-popup').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
+            </div>
+            <p style="color: #64748b; text-align: center; padding: 20px;">No hay registros guardados en tbAsignaciones.</p>
+            <div style="text-align: right; margin-top: 15px;">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-assignments-popup').remove()">Cerrar</button>
+            </div>
+          </div>
+        </div>`;
+      const existing = document.getElementById("modal-assignments-popup");
+      if (existing) existing.remove();
+      document.body.insertAdjacentHTML("beforeend", emptyModalHtml);
+      return;
     }
+
+    // Extraer lista única de ID_ASIGNACION
+    const idSet = new Set();
+    assignments.forEach(row => {
+      const idAsig = String(row.ID_ASIGNACION || row.idAsignacion || "").trim();
+      if (idAsig) idSet.add(idAsig);
+    });
+
+    let optionsHtml = `<option value="ALL">-- Todos los Lotes (${idSet.size}) --</option>`;
+    Array.from(idSet).sort().reverse().forEach(id => {
+      optionsHtml += `<option value="${id}">${id}</option>`;
+    });
 
     const modalHtml = `
       <div id="modal-assignments-popup" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
-        <div style="background: #fff; width: 90%; max-width: 900px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">Historial de asignaciones</h3>
-            <div style="display: flex; gap: 10px;">
-              <button type="button" class="btn btn-success" style="font-size: 0.8rem;" onclick="ValidatorView.exportAssignmentsToCSV()">
-                Exportar
+        <div style="background: #fff; width: 90%; max-width: 1050px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+          
+          <!-- CABECERA Y FILTRO POR ID_ASIGNACION -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 15px; flex-wrap: wrap;">
+            <div>
+              <h3 style="margin: 0; color: #1e293b;">Historial de asignaciones</h3>
+              <p style="font-size: 0.8rem; color: #64748b; margin: 2px 0 0 0;">Filtra por corrida o exporta los registros actuales.</p>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div style="display: flex; align-items: center; gap: 6px; background: #f8fafc; padding: 4px 10px; border-radius: 6px; border: 1px solid #cbd5e1;">
+                <label style="font-size: 0.78rem; font-weight: bold; color: #334155; margin: 0;">Filtrar ID_Asignación:</label>
+                <select id="select-filter-id-asignacion" class="form-control" style="font-size: 0.8rem; height: 32px; width: 220px; font-family: monospace;" onchange="ValidatorView.filterAssignmentsTable(this.value)">
+                  ${optionsHtml}
+                </select>
+              </div>
+
+              <button type="button" class="btn btn-success" style="font-size: 0.8rem; height: 32px;" onclick="ValidatorView.exportAssignmentsToCSV()">
+                📥 Exportar
               </button>
               <button type="button" onclick="document.getElementById('modal-assignments-popup').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
             </div>
           </div>
-          ${tableContent}
-          <div style="text-align: right; margin-top: 15px;">
+
+          <!-- CONTENEDOR DE TABLA -->
+          <div id="container-assignments-table" style="flex: 1; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
+            <!-- Renderizado dinámico vía filterAssignmentsTable -->
+          </div>
+
+          <div style="text-align: right; margin-top: 12px; flex-shrink: 0;">
             <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-assignments-popup').remove()">Cerrar</button>
           </div>
         </div>
@@ -1255,6 +1411,77 @@ const ValidatorView = (function () {
     const existing = document.getElementById("modal-assignments-popup");
     if (existing) existing.remove();
     document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+    // Carga inicial (Todos los registros)
+    filterAssignmentsTable("ALL");
+  }
+
+  function filterAssignmentsTable(selectedId) {
+    const container = document.getElementById("container-assignments-table");
+    if (!container) return;
+
+    const assignments = App.getDbTable("tbAsignaciones") || [];
+    let filtered = assignments;
+
+    if (selectedId && selectedId !== "ALL") {
+      filtered = assignments.filter(row => {
+        const idAsig = String(row.ID_ASIGNACION || row.idAsignacion || "").trim();
+        return idAsig === selectedId;
+      });
+    }
+
+    if (filtered.length === 0) {
+      container.innerHTML = `<p style="color: #64748b; text-align: center; padding: 20px;">No se encontraron registros para el filtro seleccionado.</p>`;
+      return;
+    }
+
+    let tableHtml = `
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+        <thead>
+          <tr style="background: #f1f5f9; text-align: left; position: sticky; top: 0; z-index: 1;">
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ID_ASIGNACIÓN</th>
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MATERIAL_ID</th>
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">FECHA REGISTRO</th>
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ORDER_ID</th>
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">PCN_ID</th>
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">UBICACIÓN</th>
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MEDIDAS</th>
+            <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ESTATUS</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+    filtered.forEach((row) => {
+      const idAsig = String(row.ID_ASIGNACION || row.idAsignacion || "N/A");
+      const matId = String(row.MATERIAL_ID || row.materialId || "N/A");
+      const fecha = row.RECORD_DATE || row.FECHA || "N/A";
+      const orderId = String(row.ORDER_ID || row.orderId || "N/A");
+      const pcnId = row.PCN_ID || row.pcnId || "N/A";
+      const rack = row.RACK || row.rack || "N/A";
+      const loc = row.LOC || row.loc || "N/A";
+      const width = row.WIDTH || row.width || "0";
+      const cells = row.CELLS || row.cells || "0";
+      const status = row.STATUS || row.status || "ASIGNADO";
+
+      const statusStyle = status === "ACTIVADO" 
+        ? "background: #dcfce7; color: #15803d;" 
+        : "background: #e0f2fe; color: #0369a1;";
+
+      tableHtml += `
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td style="padding: 8px; font-weight: bold; font-family: monospace; color: #0284c7;">${idAsig}</td>
+          <td style="padding: 8px; font-weight: bold; font-family: monospace; color: #2563eb;">${matId}</td>
+          <td style="padding: 8px;">${fecha}</td>
+          <td style="padding: 8px; font-weight: bold; font-family: monospace;">${orderId}</td>
+          <td style="padding: 8px;">${pcnId}</td>
+          <td style="padding: 8px;">${rack}-${loc}</td>
+          <td style="padding: 8px;">${width}W x ${cells}C</td>
+          <td style="padding: 8px;"><span class="badge" style="${statusStyle}">${status}</span></td>
+        </tr>`;
+    });
+
+    tableHtml += `</tbody></table>`;
+    container.innerHTML = tableHtml;
   }
 
   function exportAssignmentsToCSV() {
@@ -1326,12 +1553,15 @@ const ValidatorView = (function () {
     removeUnassignedOrder: removeUnassignedOrder,
     removeAssignmentGroup: removeAssignmentGroup,
     commitAssignments: commitAssignments,
+    filterAssignmentsTable: filterAssignmentsTable,
     openStandbyModal: openStandbyModal,
     reprocessStandbyItem: reprocessStandbyItem,
     deleteStandbyItem: deleteStandbyItem,
     exportStandbyToCSV: exportStandbyToCSV,
     openAssignmentsModal: openAssignmentsModal,
     exportAssignmentsToCSV: exportAssignmentsToCSV,
+    openActivationModal: openActivationModal,
+    executeActivation: executeActivation,
   };
 })();
 
