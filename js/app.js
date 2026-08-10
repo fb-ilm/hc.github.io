@@ -244,23 +244,31 @@ function logout() {
   }
 
   function updateUIForRole(role) {
-    document.getElementById("role-badge").innerText = role;
+    const badgeEl = document.getElementById("role-badge");
+    if (badgeEl) badgeEl.innerText = role;
 
     const tabVal = document.getElementById("tab-validator");
     const tabSup = document.getElementById("tab-supervisor");
     const tabOpt = document.getElementById("tab-optimizer");
     const tabCut = document.getElementById("tab-cutter");
+    const tabPick = document.getElementById("tab-picker");
     const tabAdm = document.getElementById("tab-admin");
 
-    // Reglas de visibilidad de Tabs basadas en roles
-    tabVal.style.display = (role === "Validador" || role === "Manager" || role === "Admin") ? "block" : "none";
-    tabSup.style.display = (role === "Supervisor" || role === "Manager" || role === "Admin") ? "block" : "none";
-    tabOpt.style.display = (role === "Optimizador" || role === "Manager" || role === "Admin") ? "block" : "none";
-    if (tabCut) tabCut.style.display = "block";
-    tabAdm.style.display = (role === "Admin") ? "block" : "none";
+    // 1. Reglas de visibilidad de Tabs basadas en roles
+    if (tabVal) tabVal.style.display = (role === "Validador" || role === "Manager" || role === "Admin") ? "block" : "none";
+    if (tabSup) tabSup.style.display = (role === "Supervisor" || role === "Manager" || role === "Admin") ? "block" : "none";
+    if (tabOpt) tabOpt.style.display = (role === "Optimizador" || role === "Manager" || role === "Admin") ? "block" : "none";
+    
+    // Visibilidad restringida para Cutter y Picker (solo Admin/Manager o su rol correspondiente)
+    if (tabCut) tabCut.style.display = (role === "Cutter" || role === "Validador" || role === "Manager" || role === "Admin") ? "block" : "none";
+    if (tabPick) tabPick.style.display = (role === "Picker" || role === "Validador" || role === "Manager" || role === "Admin") ? "block" : "none";
+    
+    if (tabAdm) tabAdm.style.display = (role === "Admin") ? "block" : "none";
 
-    // Seleccionar la vista inicial según el rol
-    if (role === "Validador" || role === "Manager") switchView("validator-view");
+    // 2. Seleccionar la vista inicial según el rol
+    if (role === "Picker") switchView("picker-view");
+    else if (role === "Cutter") switchView("cutter-view");
+    else if (role === "Validador" || role === "Manager") switchView("validator-view");
     else if (role === "Supervisor") switchView("supervisor-view");
     else if (role === "Optimizador") switchView("optimizer-view");
     else if (role === "Admin") switchView("admin-view");
@@ -278,6 +286,7 @@ function logout() {
       else if (viewId === "supervisor-view") SupervisorView.render(targetPanel);
       else if (viewId === "optimizer-view") OptimizerView.render(targetPanel);
       else if (viewId === "cutter-view") CutterView.render(targetPanel);
+      else if (viewId === "picker-view" && typeof MobilePickerView !== "undefined") MobilePickerView.render(targetPanel);
       else if (viewId === "admin-view") AdminView.render(targetPanel);
     }
 
