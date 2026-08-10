@@ -9,17 +9,24 @@ const MobilePickerView = (function () {
   let currentPickIndex = 0;
   let searchFilterQuery = "";
 
+  // Helper para obtener siempre el contenedor correcto de la pestaña
+  function getContainer() {
+    return document.getElementById("picker-view") || document.getElementById("main-content");
+  }
+
   function render(container) {
+    const targetContainer = container || getContainer();
     if (!currentUser) {
-      renderLogin(container);
+      renderLogin(targetContainer);
     } else {
-      renderMainPicker(container);
+      renderMainPicker(targetContainer);
     }
   }
 
   // 1. PANTALLA DE ACCESO MÓVIL POR NÚMERO DE EMPLEADO
   function renderLogin(container) {
-    container.innerHTML = `
+    const target = container || getContainer();
+    target.innerHTML = `
       <div style="max-width: 420px; margin: 30px auto; padding: 20px; background: #fff; border-radius: 8px; border: 1px solid #e2e8f0; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
         <h3 style="color: #0f172a; margin-top: 0;">📦 Recolección Handheld</h3>
         <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 20px;">Ingresa tu número de empleado para iniciar turno (Ej: 012345A)</p>
@@ -42,7 +49,10 @@ const MobilePickerView = (function () {
 
   function handleLogin(e) {
     if (e) e.preventDefault();
-    const input = document.getElementById("input-employee-id").value.trim().toUpperCase();
+    const inputEl = document.getElementById("input-employee-id");
+    if (!inputEl) return;
+
+    const input = inputEl.value.trim().toUpperCase();
     const regex = /^0\d{5}[A-Z]$/;
 
     if (!regex.test(input)) {
@@ -53,7 +63,9 @@ const MobilePickerView = (function () {
     currentUser = input;
     localStorage.setItem("session_picker_user", currentUser);
     App.showToast(`Sesión iniciada: ${currentUser}`, "success");
-    render(document.getElementById("main-content"));
+    
+    // Renderizado inmediato sobre el contenedor correcto
+    render(getContainer());
   }
 
   function logout() {
@@ -61,12 +73,14 @@ const MobilePickerView = (function () {
     currentUser = "";
     selectedOrders = [];
     searchFilterQuery = "";
-    render(document.getElementById("main-content"));
+    App.showToast("Sesión del recolector cerrada.", "info");
+    render(getContainer());
   }
 
   // 2. VISTA PRINCIPAL - ESTRUCTURA BASE
   function renderMainPicker(container) {
-    container.innerHTML = `
+    const target = container || getContainer();
+    target.innerHTML = `
       <div style="max-width: 480px; margin: 0 auto; padding-bottom: 20px;">
         <!-- CABECERA DE SESIÓN -->
         <div style="display: flex; justify-content: space-between; align-items: center; background: #1e293b; color: #fff; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px;">
@@ -74,7 +88,7 @@ const MobilePickerView = (function () {
             <span style="font-size: 0.75rem; color: #94a3b8;">RECOLECTOR:</span>
             <span style="font-family: monospace; font-weight: bold; color: #38bdf8; margin-left: 4px;">${currentUser}</span>
           </div>
-          <button class="btn btn-sm btn-outline-danger" style="color: #fff; border-color: #ef4444;" onclick="MobilePickerView.logout()">Salir</button>
+          <button type="button" class="btn btn-sm btn-outline-danger" style="color: #fff; border-color: #ef4444;" onclick="MobilePickerView.logout()">Salir</button>
         </div>
 
         <!-- BÚSQUEDA Y FILTRADO POR ORDEN -->
@@ -112,7 +126,6 @@ const MobilePickerView = (function () {
     renderCardsOnly();
   }
 
-  // RENDERIZADO EXCLUSIVO DE LAS TARJETAS (SIN DESTRUIR EL INPUT DE BÚSQUEDA)
   function renderCardsOnly() {
     const container = document.getElementById("container-active-groups");
     const cartBadge = document.getElementById("lbl-cart-badge");
@@ -131,7 +144,6 @@ const MobilePickerView = (function () {
     const assignments = App.getDbTable("tbAsignaciones") || [];
     const activeAssignments = assignments.filter(a => String(a.STATUS || a.status || "").trim().toUpperCase() === "ACTIVADO");
 
-    // Agrupar órdenes por Sobrante Padre (MATERIAL_ID)
     const groupsMap = {};
     activeAssignments.forEach(a => {
       const parentId = String(a.MATERIAL_ID || a.materialId).trim();
@@ -149,7 +161,6 @@ const MobilePickerView = (function () {
 
     let groupsList = Object.values(groupsMap);
 
-    // FILTRADO DINÁMICO
     if (searchFilterQuery) {
       const cleanQuery = searchFilterQuery.toLowerCase();
       groupsList = groupsList.filter(g => {
@@ -262,87 +273,20 @@ const MobilePickerView = (function () {
       return;
     }
     currentPickIndex = 0;
-    
-    // Obtener el contenedor del panel del módulo (picker-view)
-    const container = document.getElementById("picker-view") || document.getElementById("main-content");
-    renderPickCard(container);
+    renderPickCard(getContainer());
   }
 
   function renderPickCard(container) {
-    if (!container) return;
+    const target = container || getContainer();
     const current = selectedOrders[currentPickIndex];
 
     if (!current) {
-      renderMainPicker(container);
-      return;
-    }
-
-    let ordersListHtml = "";
-    current.orders.forEach(o => {
-      ordersListHtml += `<li style="font-family: monospace; font-size: 0.85rem;"><b>${o.ORDER_ID || o.orderId}</b> (${o.WIDTH || o.width}W x ${o.CELLS || o.cells}C)</li>`;
-    });
-
-    container.innerHTML = `
-      <div style="max-width: 480px; margin: 0 auto; padding-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="MobilePickerView.renderMainPicker(document.getElementById('picker-view') || document.getElementById('main-content'))">← Volver</button>
-          <span style="font-size: 0.85rem; font-weight: bold; color: #64748b;">Material ${currentPickIndex + 1} de ${selectedOrders.length}</span>
-        </div>
-
-        <div class="card" style="padding: 16px; background: #fff; border-radius: 8px; border: 2px solid #2563eb; text-align: center; margin-bottom: 12px;">
-          <span style="font-size: 0.8rem; font-weight: bold; color: #64748b; text-transform: uppercase;">UBICACIÓN FÍSICA RACK</span>
-          <h1 style="margin: 4px 0 10px 0; color: #2563eb; font-size: 2.2rem;">📍 ${current.rack} - ${current.loc}</h1>
-          <hr style="margin: 10px 0;">
-
-          <div style="font-size: 0.9rem; text-align: left; color: #334155; margin-bottom: 12px;">
-            <b>Sobrante Padre:</b> <span style="font-family: monospace; color: #2563eb; font-weight: bold;">${current.parentMaterialId}</span><br>
-            <b>PCN:</b> ${current.pcnId}
-          </div>
-
-          <div style="background: #f8fafc; padding: 10px; border-radius: 6px; text-align: left; margin-bottom: 16px; border: 1px solid #e2e8f0;">
-            <strong style="font-size: 0.8rem; color: #16a34a;">Órdenes en este Remanente:</strong>
-            <ul style="margin: 4px 0 0 16px; padding: 0; color: #475569;">${ordersListHtml}</ul>
-          </div>
-
-          <!-- INPUT DE ESCANEO -->
-          <div style="margin-bottom: 16px;">
-            <label style="font-size: 0.85rem; font-weight: bold; color: #0f172a; display: block; margin-bottom: 4px;">ESCANEAR MATERIAL PARA TOMAR:</label>
-            <input type="text" id="input-pick-scan" placeholder="Escanea código de barras..." 
-              onchange="MobilePickerView.verifyPickScan(this.value)" autofocus
-              style="width: 100%; height: 48px; font-size: 1.1rem; text-align: center; font-family: monospace; border: 2px solid #2563eb; border-radius: 6px;">
-          </div>
-
-          <!-- BOTONES DE INCIDENCIA -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <button type="button" class="btn btn-warning" style="height: 44px; font-weight: bold;" onclick="MobilePickerView.reportIssue('MATERIAL_DANADO')">
-              ⚠️ Dañado
-            </button>
-            <button type="button" class="btn btn-danger" style="height: 44px; font-weight: bold;" onclick="MobilePickerView.reportIssue('MATERIAL_AUSENTE')">
-              ❌ Ausente
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    setTimeout(() => {
-      const input = document.getElementById("input-pick-scan");
-      if (input) input.focus();
-    }, 100);
-  }
-
-  function renderPickCard(container) {
-    if (!container) return;
-    const current = selectedOrders[currentPickIndex];
-
-    if (!current) {
-      renderMainPicker(container);
+      renderMainPicker(target);
       return;
     }
 
     const parentMatIdStr = String(current.parentMaterialId).trim();
 
-    // 1. EXTRAER Y NORMALIZAR REGISTROS DE tbSobrantesResultantes
     const allSubSobrantes = App.getDbTable("tbSobrantesResultantes") || [];
     const matchedSubRems = allSubSobrantes.filter(s => {
       const pKey = String(s.PARENT_MATERIAL_ID || s.parentMaterialId || s.MATERIAL_PADRE || s.parent_material_id || "").trim();
@@ -365,11 +309,9 @@ const MobilePickerView = (function () {
       };
     });
 
-    // Clasificación de sobrantes resultantes (LATERAL / BOTTOM)
     const subLateral = matchedSubRems.find(s => s.type === 'LATERAL') || (matchedSubRems.length > 0 ? matchedSubRems[0] : null);
     const subBottom = matchedSubRems.find(s => s.type === 'BOTTOM') || (matchedSubRems.length > 1 ? matchedSubRems[1] : null);
 
-    // 2. CÁLCULOS DE DIMENSIONES Y PROPORCIONES DE ÓRDENES
     const colors = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777"];
     const sumW = current.orders.reduce((sum, o) => sum + Number(o.WIDTH || o.width || 0), 0);
     const sumC = current.orders.reduce((sum, o) => sum + Number(o.CELLS || o.cells || 0), 0);
@@ -400,23 +342,16 @@ const MobilePickerView = (function () {
         </div>`;
     });
 
-    // Proporciones fijas idénticas a cutter.js
     const topBlockHeight = (subBottom && subBottom !== subLateral) ? "70%" : "100%";
     const ordersColWidth = subLateral ? "65%" : "100%";
 
-    // 3. CONSTRUCCIÓN DEL DIAGRAMA GEOMÉTRICO (IDÉNTICO A CUTTER.JS)
     let layoutGraphicHtml = `
       <div style="position: relative; width: 100%; height: 170px; background: #0f172a; border: 2px solid #475569; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; padding: 4px; gap: 4px;">
-        
-        <!-- BLOQUE SUPERIOR (ÓRDENES Y SOBRANTE LATERAL) -->
         <div style="display: flex; width: 100%; height: ${topBlockHeight}; gap: 4px; overflow: hidden;">
-          
-          <!-- COLUMNA DE ÓRDENES -->
           <div style="width: ${ordersColWidth}; height: 100%; display: flex; flex-direction: ${isVertical ? 'column' : 'row'}; gap: 2px;">
             ${ordersPiecesHtml}
           </div>`;
 
-    // DIBUJAR SUB-REMANENTE 1 (LATERAL)
     if (subLateral) {
       layoutGraphicHtml += `
         <div style="width: 35%; height: 100%; background: #1e293b; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 2px;" title="Sobrante Resultante: ${subLateral.subMaterialId}">
@@ -425,9 +360,8 @@ const MobilePickerView = (function () {
         </div>`;
     }
 
-    layoutGraphicHtml += `</div>`; // FIN BLOQUE SUPERIOR
+    layoutGraphicHtml += `</div>`;
 
-    // DIBUJAR SUB-REMANENTE 2 (INFERIOR)
     if (subBottom && subBottom !== subLateral) {
       layoutGraphicHtml += `
         <div style="width: 100%; height: 30%; background: #1e293b; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; justify-content: center; align-items: center; gap: 8px;" title="Sobrante Resultante: ${subBottom.subMaterialId}">
@@ -438,8 +372,7 @@ const MobilePickerView = (function () {
 
     layoutGraphicHtml += `</div>`;
 
-    // 4. RENDERIZADO FINAL
-    container.innerHTML = `
+    target.innerHTML = `
       <div style="max-width: 480px; margin: 0 auto; padding-bottom: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
           <button type="button" class="btn btn-sm btn-outline-secondary" onclick="MobilePickerView.renderMainPicker(document.getElementById('picker-view') || document.getElementById('main-content'))">← Volver</button>
@@ -456,7 +389,6 @@ const MobilePickerView = (function () {
             <b>PCN:</b> ${current.pcnId}
           </div>
 
-          <!-- PLANO DE CORTE VISUAL -->
           <div style="margin-bottom: 14px; text-align: left;">
             <strong style="font-size: 0.8rem; color: #0f172a; display: block; margin-bottom: 4px;">📐 Diagrama del Sobrante (Órdenes + Nuevos Sobrantes):</strong>
             ${layoutGraphicHtml}
@@ -467,7 +399,6 @@ const MobilePickerView = (function () {
             <ul style="margin: 4px 0 0 16px; padding: 0; color: #475569;">${ordersListHtml}</ul>
           </div>
 
-          <!-- INPUT DE ESCANEO -->
           <div style="margin-bottom: 16px;">
             <label style="font-size: 0.85rem; font-weight: bold; color: #0f172a; display: block; margin-bottom: 4px;">ESCANEAR MATERIAL PARA TOMAR:</label>
             <input type="text" id="input-pick-scan" placeholder="Escanea código de barras..." 
@@ -475,7 +406,6 @@ const MobilePickerView = (function () {
               style="width: 100%; height: 48px; font-size: 1.1rem; text-align: center; font-family: monospace; border: 2px solid #2563eb; border-radius: 6px;">
           </div>
 
-          <!-- BOTONES DE INCIDENCIA -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
             <button type="button" class="btn btn-warning" style="height: 44px; font-weight: bold;" onclick="MobilePickerView.reportIssue('MATERIAL_DANADO')">
               ⚠️ Dañado
@@ -554,14 +484,14 @@ const MobilePickerView = (function () {
 
   function advancePickStep() {
     selectedOrders.splice(currentPickIndex, 1);
-    const container = document.getElementById("picker-view") || document.getElementById("main-content");
+    const target = getContainer();
     
     if (selectedOrders.length > 0) {
       if (currentPickIndex >= selectedOrders.length) currentPickIndex = 0;
-      renderPickCard(container);
+      renderPickCard(target);
     } else {
       App.showToast("🎉 ¡Ruta de recolección finalizada!", "success");
-      renderMainPicker(container);
+      renderMainPicker(target);
     }
   }
 
