@@ -1,691 +1,487 @@
 /**
- * Frontend - Vista para Rol Optimización / Manual (Reasignación & Standby)
+ * Frontend - Módulo Optimizador
  * Archivo: js/views/optimizer.js
  */
 
 const OptimizerView = (function () {
-  let selectedMaterialOverride = null;
+  let searchOrderFilterQuery = "";
+
+  let autoRefreshTimer = null;
 
   function render(container) {
-    container.innerHTML = `
-      <div class="view-header" style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
-        <div>
-          <h2>Reasignación Manual y Gestión de Standby</h2>
-          <p class="text-muted">Busca sobrantes manualmente para órdenes específicas o envíalas a Standby.</p>
-        </div>
-        <div>
-          <button type="button" class="btn btn-outline-primary" onclick="OptimizerView.openAssignmentsModal()">
-            📋 Ver Asignaciones Realizadas
-          </button>
-        </div>
+    const target = container || document.getElementById("main-content");
+    target.innerHTML = `
+      <div class="view-header" style="margin-bottom: 20px;">
+        <h2>Panel de Control del Optimizador</h2>
+        <p class="text-muted">Reparte los remanentes para recolección a los Pickers de forma individual o masiva y gestiona reasignaciones por falta de material.</p>
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-        <!-- PANEL DE REASIGNACIÓN -->
-        <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
-          <h3>Formulario de Reasignación</h3>
-          <hr style="margin: 12px 0;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <!-- PANEL 1: REPARTIR MATERIALES ACTIVADOS MASIVAMENTE O INDIVIDUAL -->
+        <div class="card" style="background: #fff; padding: 16px; border-radius: 8px; border: 1px solid #cbd5e1;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="margin: 0; color: #1e293b;">📋 Asignar Rutas a Pickers</h3>
+            <label style="font-size: 0.8rem; color: #2563eb; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+              <input type="checkbox" id="chk-select-all-parents" onchange="OptimizerView.toggleSelectAllParents(this.checked)">
+              <b>Seleccionar Todos</b>
+            </label>
+          </div>
+          <p style="font-size: 0.8rem; color: #64748b; margin-bottom: 12px;">
+            Filtra por orden, marca los sobrantes a repartir, ingresa el ID del recolector y asigna en lote.
+          </p>
 
-          <form id="form-reassign" onsubmit="return false;">
-            <div class="form-group" style="margin-bottom: 12px;">
-              <label>ORDER_ID a Consultar / Reasignar</label>
-              <div style="display: flex; gap: 8px;">
-                <input type="text" id="re-order-id" class="form-control" placeholder="Ej: 00123456780000100001" required>
-                <button type="button" class="btn btn-info" onclick="OptimizerView.lookupOrderId()">
-                  🔍 Buscar
-                </button>
-              </div>
+          <!-- FILTRO POR ORDER_ID -->
+          <div style="margin-bottom: 10px;">
+            <div style="display: flex; gap: 6px;">
+              <input type="text" id="input-filter-order-opt" class="form-control" 
+                placeholder="Shopfloor id..." 
+                value="${searchOrderFilterQuery}"
+                oninput="OptimizerView.onOrderFilterInput(this.value)"
+                style="font-family: monospace; font-size: 0.85rem; height: 36px;">
+              <button type="button" class="btn btn-outline-secondary btn-sm" onclick="OptimizerView.clearOrderFilter()">Limpiar</button>
             </div>
+          </div>
 
-            <div class="form-group" style="margin-bottom: 12px;">
-              <label>PCN_ID</label>
-              <input type="text" id="re-pcn" class="form-control" placeholder="Ej: 1019594" required>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
-              <div class="form-group">
-                <label>WIDTH (Ancho)</label>
-                <input type="number" id="re-width" class="form-control" placeholder="30" required>
-              </div>
-              <div class="form-group">
-                <label>CELLS (Celdas)</label>
-                <input type="number" id="re-cells" class="form-control" placeholder="25" required>
-              </div>
-            </div>
-
-            <div class="form-group" style="margin-bottom: 16px;">
-              <label>Motivo de Reasignación</label>
-              <select id="re-reason" class="form-control">
-                <option value="REASIGNACION_MANUAL">Reasignación Manual Preferente</option>
-                <option value="CAMBIO_DE_MEDIDAS">Ajuste / Cambio de Medidas</option>
-                <option value="RECHAZO_MATERIAL">Rechazo de Material Previo</option>
-                <option value="URGENCIA_PRODUCCION">Urgencia de Producción</option>
-              </select>
-            </div>
-
-            <!-- SOBRANTE SELECCIONADO MANUALMENTE -->
-            <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #cbd5e1; margin-bottom: 16px;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 0.85rem; font-weight: bold;">Sobrante Destino:</span>
-                <button type="button" class="btn btn-sm btn-outline-primary" onclick="OptimizerView.openSearchModal()">
-                  🔍 Seleccionar de tbInventario
-                </button>
-              </div>
-              <div id="selected-material-display" style="margin-top: 8px; font-size: 0.8rem; color: #475569;">
-                <i>Selección automática si se deja en blanco.</i>
-              </div>
-            </div>
-
-            <div style="display: flex; gap: 10px;">
-              <button type="button" class="btn btn-primary" style="flex: 1;" onclick="OptimizerView.executeReassignment()">
-                🔄 Procesar Reasignación
-              </button>
-              <button type="button" class="btn btn-outline-warning" onclick="OptimizerView.sendToStandbyDirectly()">
-                ⏳ Enviar a Standby
-              </button>
-            </div>
-          </form>
-        </div>
-
-        <!-- PANEL DE REGISTRO EN STANDBY -->
-        <div class="card" style="background: #fff; padding: 20px; border-radius: 6px; border: 1px solid #e2e8f0;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3>Órdenes en Standby</h3>
-            <button type="button" class="btn btn-sm btn-success" onclick="OptimizerView.exportStandbyToCSV()">
-              📥 Exportar Standby a CSV
+          <!-- BARRA DE ASIGNACIÓN MASIVA -->
+          <div style="display: flex; gap: 8px; background: #f1f5f9; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; margin-bottom: 14px;">
+            <input type="text" id="input-picker-global" class="form-control" placeholder="ID Picker(Ej: 0#####A)" 
+              style="font-size: 0.9rem; font-family: monospace; text-transform: uppercase; height: 38px;">
+            <button type="button" class="btn btn-primary" style="font-weight: bold; white-space: nowrap; height: 38px;" 
+              onclick="OptimizerView.assignSelectedToPicker()">
+                Asignar Seleccionados
             </button>
           </div>
-          <hr style="margin-bottom: 16px;">
 
-          <div id="standby-table-container">
-            <p style="color: #64748b; font-style: italic;">Cargando registros de Standby...</p>
-          </div>
+          <div id="container-opt-activated"></div>
+        </div>
+
+        <!-- PANEL 2: NOTIFICACIONES Y REPROCESAMIENTO DE STANDBY -->
+        <div class="card" style="background: #fff; padding: 16px; border-radius: 8px; border: 1px solid #fca5a5;">
+          <h3 style="margin-top: 0; color: #991b1b;">⚠️ Ordenes pendientes (Standby)</h3>
+          <p style="font-size: 0.8rem; color: #64748b; margin-bottom: 12px;">
+            Órdenes reportadas por falta de material (sobrante ausente o dañado). Presiona "Reasignar" para volver a buscar un remanente.
+          </p>
+          <div id="container-opt-standby"></div>
         </div>
       </div>
     `;
 
-    renderStandbyTable();
+    renderActivatedGroups();
+    renderStandbyAlerts();
+
+    startAutoRefresh();
   }
 
-  // --- REBÚSQUEDA AUTOMÁTICA AL INGRESAR ORDER_ID ---
-  function lookupOrderId() {
-    const orderId = document.getElementById("re-order-id").value.trim();
-    if (!orderId) {
-      return App.showToast("Ingresa un ORDER_ID para consultar.", "warning");
-    }
+  // 🔄 CONFIGURACIÓN DEL REFRESO AUTOMÁTICO DE DATO (60 SEGUNDOS)
+  function startAutoRefresh() {
+    stopAutoRefresh(); // Detener instancias previas para evitar duplicados
+    autoRefreshTimer = setInterval(async () => {
+      // Evitar refrescar si hay un modal o pop-up abierto
+      if (document.getElementById("modal-reassign-opt")) return;
 
-    const assignments = App.getDbTable("tbAsignaciones") || [];
-    const standbyList = App.getDbTable("tbStandby") || [];
+      if (typeof App.refreshDatabase === "function") {
+        await App.refreshDatabase();
+        renderActivatedGroups();
+        renderStandbyAlerts();
+      }
+    }, 20000); // 60,000 ms = 1 Minuto
+  }
 
-    // Buscar coincidencia en tbAsignaciones o tbStandby
-    const matchAssign = assignments.find(a => String(a.ORDER_ID || a.orderId).trim() === orderId);
-    const matchStandby = standbyList.find(s => String(s.ORDER_ID || s.orderId).trim() === orderId && s.STATUS !== "RESOLVED" && s.STATUS !== "ELIMINADO");
-
-    const match = matchAssign || matchStandby;
-
-    if (match) {
-      const sourceTable = matchAssign ? "tbAsignaciones" : "tbStandby";
-      const pcn = match.PCN_ID || match.pcnId || "";
-      const width = match.WIDTH || match.width || 0;
-      const cells = match.CELLS || match.cells || 0;
-
-      // Autocompletar formulario principal
-      document.getElementById("re-pcn").value = pcn;
-      document.getElementById("re-width").value = width;
-      document.getElementById("re-cells").value = cells;
-
-      // Mostrar Modal con los datos encontrados y opción de reasignación directa
-      showMatchFoundPopup(match, sourceTable);
-    } else {
-      App.showToast(`No se encontró registro para el ORDER_ID ${orderId}. Se continuará como nueva asignación.`, "info");
+  function stopAutoRefresh() {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
     }
   }
 
-  // --- POP-UP DE COINCIDENCIA ENCONTRADA ---
-  function showMatchFoundPopup(matchData, sourceTable) {
-    const existing = document.getElementById("modal-match-found");
-    if (existing) existing.remove();
-
-    const orderId = matchData.ORDER_ID || matchData.orderId || "";
-    const pcn = matchData.PCN_ID || matchData.pcnId || "";
-    const width = matchData.WIDTH || matchData.width || 0;
-    const cells = matchData.CELLS || matchData.cells || 0;
-    const currentMat = matchData.MATERIAL_ID || matchData["MATERIAL ID"] || matchData.materialId || "N/A";
-
-    const modalHtml = `
-      <div id="modal-match-found" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
-        <div style="background: #fff; width: 90%; max-width: 650px; border-radius: 8px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">
-            <h3 style="margin: 0; color: #1e293b;">Coincidencia Encontrada en ${sourceTable}</h3>
-            <button type="button" onclick="document.getElementById('modal-match-found').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
-          </div>
-
-          <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #cbd5e1; margin-bottom: 16px; font-size: 0.85rem;">
-            <p style="margin: 4px 0;"><strong>ORDER_ID:</strong> <span style="font-family: monospace; color: #2563eb;">${orderId}</span></p>
-            <p style="margin: 4px 0;"><strong>PCN_ID:</strong> ${pcn} | <strong>Medidas:</strong> ${width}W x ${cells}C</p>
-            <p style="margin: 4px 0;"><strong>Sobrante Actual:</strong> ${currentMat}</p>
-          </div>
-
-          <div class="form-group" style="margin-bottom: 16px;">
-            <label style="font-size: 0.85rem; font-weight: bold;">Motivo de Reasignación</label>
-            <select id="modal-re-reason" class="form-control">
-              <option value="REASIGNACION_MANUAL">Reasignación Manual Preferente</option>
-              <option value="CAMBIO_DE_MEDIDAS">Ajuste / Cambio de Medidas</option>
-              <option value="RECHAZO_MATERIAL">Rechazo de Material Previo</option>
-              <option value="URGENCIA_PRODUCCION">Urgencia de Producción</option>
-            </select>
-          </div>
-
-          <div style="text-align: right; display: flex; justify-content: flex-end; gap: 10px;">
-            <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-match-found').remove()">Cerrar</button>
-            <button type="button" class="btn btn-primary" onclick="OptimizerView.openSearchModalFromPopup('${orderId}', '${pcn}', ${width}, ${cells})">🔍 Buscar Nuevo Sobrante</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    document.body.insertAdjacentHTML("beforeend", modalHtml);
-  }
-
-  function openSearchModalFromPopup(orderId, pcn, width, cells) {
-    const reasonSelect = document.getElementById("modal-re-reason");
-    if (reasonSelect) {
-      document.getElementById("re-reason").value = reasonSelect.value;
-    }
-    const modal = document.getElementById("modal-match-found");
-    if (modal) modal.remove();
-
-    openSearchModal();
-  }
-
-  // --- RENDERIZAR TABLA DE STANDBY CON ELIMINACIÓN ---
-  function renderStandbyTable() {
-    const container = document.getElementById("standby-table-container");
+  function renderActivatedGroups() {
+    const container = document.getElementById("container-opt-activated");
     if (!container) return;
 
-    const standbyList = App.getDbTable("tbStandby") || [];
-    const activeStandby = standbyList.filter((s) => s.STATUS !== "RESOLVED" && s.STATUS !== "ELIMINADO");
+    const assignments = App.getDbTable("tbAsignaciones") || [];
+    const activeAssignments = assignments.filter(a => String(a.STATUS || a.status || "").trim().toUpperCase() === "ACTIVADO");
 
-    if (activeStandby.length === 0) {
-      container.innerHTML = `<p style="color: #64748b; font-style: italic;">No hay órdenes pendientes en Standby.</p>`;
+    // Agrupar por Sobrante Padre e incluir sus órdenes
+    const groupsMap = {};
+    activeAssignments.forEach(a => {
+      const parentId = String(a.MATERIAL_ID || a.materialId).trim();
+      if (!groupsMap[parentId]) {
+        groupsMap[parentId] = {
+          parentMaterialId: parentId,
+          rack: a.RACK || 'N/A',
+          loc: a.LOC || 'N/A',
+          pcnId: a.PCN_ID || a.pcnId,
+          orders: []
+        };
+      }
+      groupsMap[parentId].orders.push(a);
+    });
+
+    let groupsList = Object.values(groupsMap);
+
+    // Aplicar Filtro por ORDER_ID o PADRE
+    if (searchOrderFilterQuery) {
+      const cleanQ = searchOrderFilterQuery.toLowerCase();
+      groupsList = groupsList.filter(g => {
+        const matchParent = g.parentMaterialId.toLowerCase().includes(cleanQ);
+        const matchOrder = g.orders.some(o => String(o.ORDER_ID || o.orderId || "").toLowerCase().includes(cleanQ));
+        return matchParent || matchOrder;
+      });
+    }
+
+    if (groupsList.length === 0) {
+      container.innerHTML = `<p style="color: #64748b; font-style: italic; text-align: center; padding: 20px;">
+        ${searchOrderFilterQuery ? `No hay sobrantes activados que contengan la orden "${searchOrderFilterQuery}".` : 'No hay materiales activados pendientes por asignar a Pickers.'}
+      </p>`;
       return;
     }
 
-    let html = `
-      <div style="max-height: 420px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
+    let html = `<div style="max-height: 380px; overflow-y: auto;">`;
+    groupsList.forEach(g => {
+      let ordersListHtml = "";
+      g.orders.forEach(o => {
+        const ordId = String(o.ORDER_ID || o.orderId || "N/A");
+        const w = o.WIDTH || o.width || 0;
+        const c = o.CELLS || o.cells || 0;
+        const isMatch = searchOrderFilterQuery && ordId.toLowerCase().includes(searchOrderFilterQuery.toLowerCase());
+        const highlightStyle = isMatch ? "background: #fef08a; font-weight: bold; color: #854d0e; padding: 1px 4px; border-radius: 2px;" : "";
+
+        ordersListHtml += `<li style="font-family: monospace; font-size: 0.78rem; margin-top: 2px;">
+          <span style="${highlightStyle}"> Orden: ${ordId.slice(0,10)} | Linea: ${ordId.slice(10,16)}</span> (${w}W x ${c}C)
+        </li>`;
+      });
+
+      html += `
+        <div style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 10px; background: #f8fafc; display: flex; align-items: flex-start; gap: 10px;">
+          <div style="margin-top: 2px;">
+            <input type="checkbox" class="chk-parent-item" value="${g.parentMaterialId}" style="width: 18px; height: 18px; cursor: pointer;">
+          </div>
+          <div style="flex: 1;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+              <strong style="font-family: monospace; color: #2563eb; font-size: 0.95rem;">ID Remanente: ${g.parentMaterialId}</strong>
+              <span class="badge" style="background: #0284c7; color: #fff; font-size: 0.75rem;">Locación: ${g.rack}-${g.loc}</span>
+            </div>
+            <div style="font-size: 0.78rem; color: #475569; margin-bottom: 4px;">
+              <b>PCN:</b> ${g.pcnId} | <b>Órdenes (${g.orders.length}):</b>
+            </div>
+            <!-- LISTA DE ÓRDENES QUE PERTENECEN AL SOBRANTE -->
+            <ul style="margin: 0 0 0 16px; padding: 0; color: #334155;">
+              ${ordersListHtml}
+            </ul>
+          </div>
+        </div>`;
+    });
+    html += `</div>`;
+    container.innerHTML = html;
+  }
+
+  function onOrderFilterInput(val) {
+    searchOrderFilterQuery = String(val || "").trim();
+    renderActivatedGroups();
+  }
+
+  function clearOrderFilter() {
+    searchOrderFilterQuery = "";
+    const inputEl = document.getElementById("input-filter-order-opt");
+    if (inputEl) inputEl.value = "";
+    renderActivatedGroups();
+  }
+
+  function toggleSelectAllParents(checked) {
+    const checkboxes = document.querySelectorAll(".chk-parent-item");
+    checkboxes.forEach(chk => chk.checked = checked);
+  }
+
+  async function assignSelectedToPicker() {
+    const pickerInput = document.getElementById("input-picker-global");
+    const pickerId = pickerInput?.value.trim().toUpperCase();
+
+    if (!pickerId || !/^0\d{5}[A-Z]$/.test(pickerId)) {
+      App.showToast("Ingresa un número de empleado válido (Ej: 012345A).", "error");
+      return;
+    }
+
+    const selectedCheckboxes = document.querySelectorAll(".chk-parent-item:checked");
+    const parentIds = Array.from(selectedCheckboxes).map(chk => chk.value);
+
+    if (parentIds.length === 0) {
+      App.showToast("Selecciona al menos un sobrante padre de la lista.", "warning");
+      return;
+    }
+
+    App.showLoader(`Asignando ${parentIds.length} sobrante(s) a Picker ${pickerId}...`);
+
+    try {
+      let successCount = 0;
+      for (const parentId of parentIds) {
+        const res = await GasAPI.send("assignToPicker", {
+          parentMaterialId: parentId,
+          pickerId: pickerId
+        });
+        if (res && res.success) successCount++;
+      }
+
+      App.hideLoader();
+
+      if (successCount > 0) {
+        App.showToast(`✅ Se asignaron ${successCount} sobrante(s) exitosamente a ${pickerId}`, "success");
+        if (pickerInput) pickerInput.value = "";
+        await App.refreshDatabase();
+        renderActivatedGroups();
+      } else {
+        App.showToast("No se pudo completar la asignación de los materiales.", "error");
+      }
+    } catch (e) {
+      App.hideLoader();
+      App.showToast("Error de comunicación con el servidor: " + e.message, "error");
+    }
+  }
+
+  function renderStandbyAlerts() {
+    const container = document.getElementById("container-opt-standby");
+    if (!container) return;
+
+    const standbyList = App.getDbTable("tbStandby") || [];
+    const activeStandby = standbyList.filter(s => {
+      const st = String(s.STATUS || s.status || "").trim().toUpperCase();
+      return st !== "RESOLVED" && st !== "ELIMINADO";
+    });
+
+    if (activeStandby.length === 0) {
+      container.innerHTML = `<p style="color: #16a34a; font-style: italic; text-align: center; padding: 20px;">🎉 No hay incidencias pendientes en Standby.</p>`;
+      return;
+    }
+
+    let html = `<div style="max-height: 400px; overflow-y: auto;">`;
+    activeStandby.forEach(s => {
+      const ordId = String(s.ORDER_ID || s.orderId || "N/A");
+      const pcnId = String(s.PCN_ID || s.pcnId || "N/A");
+      const width = s.WIDTH || s.width || 0;
+      const cells = s.CELLS || s.cells || 0;
+      const reason = s.REASON || s.reason || "INCIDENCIA";
+      const standbyId = s.STANDBY_ID || s.standbyKey || "";
+
+      html += `
+        <div style="border: 1px solid #fca5a5; background: #fef2f2; border-radius: 6px; padding: 10px; margin-bottom: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <strong style="font-family: monospace; color: #dc2626; font-size: 0.9rem;">ORDEN: 00${ordId.slice(0,8)} | LINEA: ${ordId.slice(8,14)} </strong>
+            <span class="badge" style="background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;">${reason}</span>
+          </div>
+          <div style="font-size: 0.78rem; color: #475569; margin-bottom: 8px;">
+            <b>PCN:</b> ${pcnId} | <b>Medidas:</b> ${width}W x ${cells}C
+          </div>
+          <button type="button" class="btn btn-sm btn-primary btn-block" style="font-weight: bold;" 
+            onclick="OptimizerView.reprocessStandbyItem('${ordId}', '${pcnId}', ${width}, ${cells}, '${standbyId}')">
+            Buscar remanente
+          </button>
+        </div>`;
+    });
+    html += `</div>`;
+    container.innerHTML = html;
+  }
+
+  function reprocessStandbyItem(orderId, pcnId, width, cells, standbyId) {
+    const rawInv = App.getDbTable("tbInventario") || [];
+    
+    // Filtrar sobrantes compatibles en tbInventario (Auditados, mismo PCN y que quepan las medidas)
+    const matches = rawInv.filter(m => {
+      const st = String(m.STATUS || m.status || "").toUpperCase();
+      const pcnMatch = String(m.PCN_ID || m.pcnId || "").trim() === String(pcnId).trim();
+      const wMatch = Number(m.WIDTH || m.width || 0) >= Number(width);
+      const cMatch = Number(m.CELLS || m.cells || 0) >= Number(cells);
+      return st !== "ELIMINADO" && pcnMatch && wMatch && cMatch;
+    });
+
+    openReassignModal({
+      orderId: orderId,
+      pcnId: pcnId,
+      width: Number(width),
+      cells: Number(cells),
+      standbyId: standbyId,
+      matches: matches
+    });
+  }
+
+  // 1. MODAL ACTUALIZADO CON OPCIÓN DE ELIMINACIÓN
+  function openReassignModal(config) {
+    const bestMatch = config.matches.length > 0 ? config.matches[0] : null;
+
+    let proposalHtml = "";
+    if (bestMatch) {
+      const bestMatId = bestMatch.MATERIAL_ID || bestMatch.materialId;
+      proposalHtml = `
+        <div style="background: #f0fdf4; border: 2px solid #22c55e; padding: 12px; border-radius: 6px; margin-bottom: 16px;">
+          <span class="badge" style="background: #22c55e; color: #fff; font-size: 0.75rem;">PROPUESTA RECOMENDADA</span>
+          <div style="margin-top: 6px; font-size: 0.9rem; color: #15803d;">
+            <b>Sobrante propuesto:</b> <span style="font-family: monospace; font-size: 1.05rem;">${bestMatId}</span><br>
+            <b>Ubicación:</b> ${bestMatch.RACK || 'N/A'}-${bestMatch.LOC || 'N/A'} | <b>Medidas:</b> ${bestMatch.WIDTH}W x ${bestMatch.CELLS}C
+          </div>
+          <button type="button" class="btn btn-success btn-block" style="margin-top: 10px; font-weight: bold;" 
+            onclick="OptimizerView.confirmReassignment('${config.orderId}', '${config.pcnId}', ${config.width}, ${config.cells}, '${bestMatId}', '${config.standbyId}')">
+            Confirmar y reasignar
+          </button>
+        </div>`;
+    } else {
+      proposalHtml = `
+        <div style="background: #fef2f2; border: 1px solid #fca5a5; padding: 12px; border-radius: 6px; margin-bottom: 16px; color: #991b1b; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+          <div>
+            ⚠️ No se encontró sobrante compatible en inventario para <b>${config.width}W x ${config.cells}C</b>.
+          </div>
+          <button type="button" class="btn btn-sm btn-danger" style="font-weight: bold; white-space: nowrap;"
+            onclick="OptimizerView.deleteStandbyOrder('${config.orderId}', '${config.standbyId}')">
+            Eliminar orden
+          </button>
+        </div>`;
+    }
+
+    let matchesTableHtml = "";
+    if (config.matches.length === 0) {
+      matchesTableHtml = `<p style="color: #64748b; text-align: center; padding: 15px;">No hay sobrantes compatibles disponibles en tbInventario.</p>`;
+    } else {
+      matchesTableHtml = `
         <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
           <thead>
-            <tr style="background: #f1f5f9; text-align: left; position: sticky; top: 0; z-index: 1;">
-              <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ORDER_ID</th>
-              <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">PCN_ID</th>
-              <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MEDIDAS</th>
-              <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MOTIVO</th>
-              <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ACCIÓN</th>
+            <tr style="background: #f1f5f9; text-align: left; position: sticky; top: 0;">
+              <th style="padding: 6px;">MATERIAL_ID</th>
+              <th style="padding: 6px;">ESTATUS</th>
+              <th style="padding: 6px;">MEDIDAS</th>
+              <th style="padding: 6px;">UBICACIÓN</th>
+              <th style="padding: 6px;">ACCIÓN</th>
             </tr>
           </thead>
           <tbody>`;
 
-    activeStandby.forEach((row) => {
-      const orderId = String(row.ORDER_ID || row.orderId || "N/A");
-      const pcnId = row.PCN_ID || row.pcnId || "N/A";
-      const width = row.WIDTH || row.width || "0";
-      const cells = row.CELLS || row.cells || "0";
-      const reason = row.REASON || row.reason || "STANDBY";
-
-      html += `
-        <tr style="border-bottom: 1px solid #e2e8f0;">
-          <td style="padding: 8px; font-weight: bold; font-family: monospace; color: #2563eb;">${orderId}</td>
-          <td style="padding: 8px;">${pcnId}</td>
-          <td style="padding: 8px;">${width}W x ${cells}C</td>
-          <td style="padding: 8px;"><span class="badge" style="background: #fef3c7; color: #b45309;">${reason}</span></td>
-          <td style="padding: 8px;">
-            <button type="button" class="btn btn-sm btn-outline-danger" onclick="OptimizerView.deleteStandbyGroup('${orderId}')">
-              🗑️ Eliminar
-            </button>
-          </td>
-        </tr>`;
-    });
-
-    html += `</tbody></table></div>`;
-    container.innerHTML = html;
-  }
-
-  // --- ELIMINACIÓN DE ÓRDENES Y SUS COINCIDENCIAS (10 PRIMEROS DÍGITOS) ---
-  async function deleteStandbyGroup(targetOrderId) {
-    const prefix = String(targetOrderId).substring(0, 10);
-    if (!confirm(`¿Deseas eliminar la orden ${targetOrderId} y todas sus coincidencias pertenecientes al lote (${prefix}) en Standby?`)) {
-      return;
-    }
-
-    App.showLoader("Eliminando órdenes en Standby...");
-
-    try {
-      const res = await GasAPI.send("deleteStandbyGroup", { prefix10: prefix });
-      App.hideLoader();
-
-      if (res && res.success) {
-        App.showToast(`Órdenes asociadas al lote ${prefix} eliminadas de Standby.`, "success");
-        await App.refreshDatabase();
-        renderStandbyTable();
-      } else {
-        App.showToast("Error al eliminar registros: " + (res?.message || "Error desconocido"), "error");
-      }
-    } catch (err) {
-      App.hideLoader();
-      App.showToast("Error de conexión: " + err.message, "error");
-    }
-  }
-
-  // --- BÚSQUEDA Y SELECCIÓN DE SOBRANTE ---
-  function openSearchModal() {
-    const orderId = document.getElementById("re-order-id").value.trim();
-    const pcn = document.getElementById("re-pcn").value.trim();
-    const width = Number(document.getElementById("re-width").value) || 0;
-    const cells = Number(document.getElementById("re-cells").value) || 0;
-
-    if (!orderId || !pcn || !width || !cells) {
-      return App.showToast("Ingresa ORDER_ID, PCN_ID, WIDTH y CELLS antes de buscar un sobrante.", "warning");
-    }
-
-    const minW = width + (CONFIG.MARGINS?.WIDTH || 2);
-    const minC = cells + (CONFIG.MARGINS?.CELLS || 5);
-
-    const rawInv = App.getDbTable("tbInventario") || [];
-    const candidates = rawInv.filter(m => 
-      m.STATUS !== 'ELIMINADO' && 
-      m.STATUS !== 'ASIGNADO' &&
-      String(m.PCN_ID).trim() === pcn &&
-      Number(m.WIDTH) >= minW &&
-      Number(m.CELLS) >= minC
-    );
-
-    if (candidates.length === 0) {
-      return App.showToast(`No se encontraron sobrantes disponibles para PCN ${pcn} (${minW}W x ${minC}C).`, "info");
-    }
-
-    showCandidatesPopup(candidates, { orderId, pcn, width, cells, minW, minC });
-  }
-
-  function showCandidatesPopup(candidates, params) {
-    const existingModal = document.getElementById("modal-search-remanente");
-    if (existingModal) existingModal.remove();
-
-    let rowsHtml = candidates.map(c => {
-      const matId = c["MATERIAL_ID"] || c["MATERIAL ID"] || c.materialId;
-      const rack = c.RACK || c.rack || "N/A";
-      const loc = c.LOC || c.loc || "N/A";
-      const w = c.WIDTH || 0;
-      const cl = c.CELLS || 0;
-      const status = c.STATUS || "DISPONIBLE";
-
-      const itemJson = JSON.stringify(c).replace(/"/g, '&quot;');
-
-      return `
-        <tr style="border-bottom: 1px solid #e2e8f0; font-size: 0.85rem;">
-          <td style="padding: 8px; font-weight: bold; color: #0284c7;">${matId}</td>
-          <td style="padding: 8px;">${w} W x ${cl} C</td>
-          <td style="padding: 8px;">RACK: ${rack} | LOC: ${loc}</td>
-          <td style="padding: 8px;"><span class="badge" style="background: #dcfce7; color: #166534;">${status}</span></td>
-          <td style="padding: 8px; text-align: center;">
-            <button type="button" class="btn btn-primary" style="padding: 3px 10px; font-size: 0.75rem;" onclick="OptimizerView.selectMaterialFromModal('${itemJson}')">
-              Seleccionar
-            </button>
-          </td>
-        </tr>
-      `;
-    }).join('');
-
-    const modalHtml = `
-      <div id="modal-search-remanente" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
-        <div style="background: #fff; width: 90%; max-width: 700px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">Sobrantes Compatibles en Inventario</h3>
-            <button type="button" onclick="document.getElementById('modal-search-remanente').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
-          </div>
-          <p style="font-size: 0.85rem; color: #64748b; margin-top: 0;">
-            Orden: <strong>${params.orderId}</strong> | PCN: <strong>${params.pcn}</strong> | Requerido: <strong>${params.minW}W x ${params.minC}C</strong>
-          </p>
-          
-          <div style="overflow-y: auto; flex: 1; border: 1px solid #e2e8f0; border-radius: 4px; margin-bottom: 15px;">
-            <table style="width: 100%; border-collapse: collapse;">
-              <thead>
-                <tr style="background: #f8fafc; text-align: left; border-bottom: 2px solid #e2e8f0; font-size: 0.8rem;">
-                  <th style="padding: 8px;">MATERIAL_ID</th>
-                  <th style="padding: 8px;">MEDIDAS</th>
-                  <th style="padding: 8px;">UBICACIÓN</th>
-                  <th style="padding: 8px;">ESTATUS</th>
-                  <th style="padding: 8px; text-align: center;">ACCIÓN</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rowsHtml}
-              </tbody>
-            </table>
-          </div>
-
-          <div style="text-align: right;">
-            <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-search-remanente').remove()">Cancelar</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-  }
-
-  function selectMaterialFromModal(jsonStr) {
-    try {
-      const material = JSON.parse(jsonStr);
-      selectedMaterialOverride = material;
-      updateMaterialDisplay();
-
-      const modal = document.getElementById("modal-search-remanente");
-      if (modal) modal.remove();
-
-      const matId = material["MATERIAL_ID"] || material["MATERIAL ID"] || material.materialId;
-      App.showToast(`Sobrante ${matId} asignado.`, "success");
-    } catch (e) {
-      console.error("Error seleccionando material:", e);
-    }
-  }
-
-  function updateMaterialDisplay() {
-    const display = document.getElementById("selected-material-display");
-    if (!display) return;
-
-    if (selectedMaterialOverride) {
-      const matId = selectedMaterialOverride["MATERIAL_ID"] || selectedMaterialOverride["MATERIAL ID"] || selectedMaterialOverride.materialId;
-      display.innerHTML = `
-        <span style="color: #16a34a; font-weight: bold;">
-          ✓ Seleccionado: <b>${matId}</b> (${selectedMaterialOverride.WIDTH}W x ${selectedMaterialOverride.CELLS}C) - Ubic: ${selectedMaterialOverride.RACK || 'N/A'}-${selectedMaterialOverride.LOC || 'N/A'}
-        </span>
-        <button type="button" class="btn btn-sm btn-outline-danger" style="margin-left: 8px; padding: 1px 6px; font-size: 0.7rem;" onclick="OptimizerView.clearMaterialOverride()">Quitar</button>
-      `;
-    } else {
-      display.innerHTML = `<i>Selección automática si se deja en blanco.</i>`;
-    }
-  }
-
-  function clearMaterialOverride() {
-    selectedMaterialOverride = null;
-    updateMaterialDisplay();
-  }
-
-  // --- EJECUTAR REASIGNACIÓN ---
-  async function executeReassignment() {
-    const orderId = document.getElementById("re-order-id").value.trim();
-    const pcn = document.getElementById("re-pcn").value.trim();
-    const width = Number(document.getElementById("re-width").value);
-    const cells = Number(document.getElementById("re-cells").value);
-    const reason = document.getElementById("re-reason").value;
-
-    if (!orderId || !pcn || !width || !cells) {
-      return App.showToast("Completa los parámetros de la orden a reasignar.", "error");
-    }
-
-    let targetMaterialId = null;
-    let rack = "";
-    let loc = "";
-
-    if (selectedMaterialOverride) {
-      targetMaterialId = selectedMaterialOverride["MATERIAL_ID"] || selectedMaterialOverride["MATERIAL ID"] || selectedMaterialOverride.materialId;
-      rack = selectedMaterialOverride.RACK || selectedMaterialOverride.rack || "";
-      loc = selectedMaterialOverride.LOC || selectedMaterialOverride.loc || "";
-    } else {
-      const rawInv = App.getDbTable("tbInventario") || [];
-      const candidates = rawInv.filter(
-        (m) =>
-          m.STATUS !== "ELIMINADO" &&
-          m.STATUS !== "ASIGNADO" &&
-          String(m.PCN_ID).trim() === pcn &&
-          Number(m.WIDTH) >= width + (CONFIG.MARGINS?.WIDTH || 2) &&
-          Number(m.CELLS) >= cells + (CONFIG.MARGINS?.CELLS || 5)
-      );
-
-      if (candidates.length > 0) {
-        targetMaterialId = candidates[0]["MATERIAL_ID"] || candidates[0]["MATERIAL ID"];
-        rack = candidates[0].RACK || candidates[0].rack || "";
-        loc = candidates[0].LOC || candidates[0].loc || "";
-      }
-    }
-
-    App.showLoader("Procesando reasignación...");
-    const todayStr = new Date().toISOString().split("T")[0];
-
-    const payload = {
-      orderId: orderId,
-      pcnId: pcn,
-      width: width,
-      cells: cells,
-      reason: reason,
-      targetMaterialId: targetMaterialId,
-      rack: rack,
-      loc: loc,
-      reassignDate: todayStr,
-    };
-
-    try {
-      const res = await GasAPI.send("reassignOrder", payload);
-      App.hideLoader();
-
-      if (res && res.success) {
-        if (res.reassigned) {
-          App.showToast(`Éxito: Orden reasignada al sobrante ${targetMaterialId}`, "success");
-        } else {
-          App.showToast("No se encontró sobrante. El lote fue enviado a Standby y sobrantes devueltos a AUDITADO.", "info");
-        }
-
-        document.getElementById("form-reassign").reset();
-        selectedMaterialOverride = null;
-        updateMaterialDisplay();
-
-        await App.refreshDatabase();
-        renderStandbyTable();
-      } else {
-        App.showToast("Error en reasignación: " + (res ? res.message : "Error desconocido"), "error");
-      }
-    } catch (err) {
-      App.hideLoader();
-      App.showToast("Error de conexión al procesar la reasignación: " + err.message, "error");
-    }
-  }
-
-  // --- ENVIAR A STANDBY DIRECTAMENTE (FORZADO SIN SOBRANTE) ---
-  async function sendToStandbyDirectly() {
-    const orderId = document.getElementById("re-order-id").value.trim();
-    const pcn = document.getElementById("re-pcn").value.trim();
-    const width = Number(document.getElementById("re-width").value);
-    const cells = Number(document.getElementById("re-cells").value);
-    const reason = document.getElementById("re-reason").value;
-
-    if (!orderId || !pcn || !width || !cells) {
-      return App.showToast("Ingresa los datos de la orden para enviarla a Standby.", "error");
-    }
-
-    App.showLoader("Enviando lote a Standby y liberando sobrantes...");
-    const todayStr = new Date().toISOString().split("T")[0];
-
-    const payload = {
-      orderId: orderId,
-      pcnId: pcn,
-      width: width,
-      cells: cells,
-      reason: "ENVIO_DIRECTO_STANDBY: " + reason,
-      targetMaterialId: null,
-      rack: "",
-      loc: "",
-      reassignDate: todayStr,
-    };
-
-    try {
-      const res = await GasAPI.send("reassignOrder", payload);
-      App.hideLoader();
-
-      if (res && res.success) {
-        App.showToast("Lote enviado a Standby y sobrantes liberados con éxito.", "success");
-        document.getElementById("form-reassign").reset();
-        selectedMaterialOverride = null;
-        updateMaterialDisplay();
-
-        await App.refreshDatabase();
-        renderStandbyTable();
-      } else {
-        App.showToast("Error al enviar a Standby: " + (res?.message || "Error desconocido"), "error");
-      }
-    } catch (err) {
-      App.hideLoader();
-      App.showToast("Error de comunicación: " + err.message, "error");
-    }
-  }
-
-  // --- POP-UP DE CONSULTA DE ASIGNACIONES REALIZADAS ---
-  function openAssignmentsModal() {
-    const assignments = App.getDbTable("tbAsignaciones") || [];
-
-    let tableContent = "";
-    if (assignments.length === 0) {
-      tableContent = `<p style="color: #64748b; text-align: center; padding: 20px;">No hay registros guardados en tbAsignaciones.</p>`;
-    } else {
-      tableContent = `
-        <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
-          <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
-            <thead>
-              <tr style="background: #f1f5f9; text-align: left; position: sticky; top: 0; z-index: 1;">
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MATERIAL_ID</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">FECHA ASIGNACIÓN</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ORDER_ID</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">PCN_ID</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">UBICACIÓN</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">MEDIDAS</th>
-                <th style="padding: 8px; border-bottom: 2px solid #cbd5e1;">ESTATUS</th>
-              </tr>
-            </thead>
-            <tbody>`;
-
-      assignments.forEach((row) => {
-        const matId = row["MATERIAL ID"] || row.MATERIAL_ID || row.materialId || "N/A";
-        const fecha = row.FECHA_ASIGNACION || row.FECHA || "N/A";
-        const orderId = String(row.ORDER_ID || row.orderId || "N/A");
-        const pcnId = row.PCN_ID || row.pcnId || "N/A";
-        const rack = row.RACK || row.rack || "N/A";
-        const loc = row.LOC || row.loc || "N/A";
-        const width = row.WIDTH || row.width || "0";
-        const cells = row.CELLS || row.cells || "0";
-        const status = row.STATUS || row.status || "ASIGNADO";
-
-        tableContent += `
+      config.matches.forEach(m => {
+        const matId = m.MATERIAL_ID || m.materialId;
+        matchesTableHtml += `
           <tr style="border-bottom: 1px solid #e2e8f0;">
-            <td style="padding: 8px; font-weight: bold; font-family: monospace; color: #2563eb;">${matId}</td>
-            <td style="padding: 8px;">${fecha}</td>
-            <td style="padding: 8px; font-weight: bold; font-family: monospace;">${orderId}</td>
-            <td style="padding: 8px;">${pcnId}</td>
-            <td style="padding: 8px;">${rack}-${loc}</td>
-            <td style="padding: 8px;">${width}W x ${cells}C</td>
-            <td style="padding: 8px;"><span class="badge" style="background: #e0f2fe; color: #0369a1;">${status}</span></td>
+            <td style="padding: 6px; font-weight: bold; font-family: monospace; color: #2563eb;">${matId}</td>
+            <td style="padding: 6px;"><span class="badge" style="background: #dcfce7; color: #15803d;">${m.STATUS || 'AUDITADO'}</span></td>
+            <td style="padding: 6px;">${m.WIDTH}W x ${m.CELLS}C</td>
+            <td style="padding: 6px;">${m.RACK || 'N/A'}-${m.LOC || 'N/A'}</td>
+            <td style="padding: 6px;">
+              <button class="btn btn-sm btn-outline-primary" 
+                onclick="OptimizerView.confirmReassignment('${config.orderId}', '${config.pcnId}', ${config.width}, ${config.cells}, '${matId}', '${config.standbyId}')">
+                Seleccionar
+              </button>
+            </td>
           </tr>`;
       });
-
-      tableContent += `
-            </tbody>
-          </table>
-        </div>`;
+      matchesTableHtml += `</tbody></table>`;
     }
 
     const modalHtml = `
-      <div id="modal-assignments-popup" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
-        <div style="background: #fff; width: 90%; max-width: 900px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">Historial de Asignaciones en tbAsignaciones</h3>
-            <div style="display: flex; gap: 10px;">
-              <button type="button" class="btn btn-success" style="font-size: 0.8rem;" onclick="ValidatorView.exportAssignmentsToCSV()">
-                📥 Exportar a CSV
-              </button>
-              <button type="button" onclick="document.getElementById('modal-assignments-popup').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
-            </div>
-          </div>
+      <div id="modal-reassign-opt" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
+        <div style="background: #fff; width: 90%; max-width: 720px; max-height: 85vh; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
           
-          ${tableContent}
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0; color: #1e293b;">🔄 Reasignación de Orden ${config.orderId}</h3>
+            <button type="button" onclick="document.getElementById('modal-reassign-opt').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
+          </div>
 
-          <div style="text-align: right; margin-top: 15px;">
-            <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-assignments-popup').remove()">Cerrar</button>
+          <p style="font-size: 0.82rem; color: #475569; margin-bottom: 12px;">
+            <b>PCN:</b> ${config.pcnId} | <b>Medidas requeridas:</b> ${config.width}W x ${config.cells}C
+          </p>
+
+          ${proposalHtml}
+
+          <h4 style="font-size: 0.85rem; color: #1e293b; margin-bottom: 6px;">Sobrantes Compatibles en Inventario:</h4>
+          <div style="flex: 1; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
+            ${matchesTableHtml}
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+            <button type="button" class="btn btn-outline-danger" 
+              onclick="OptimizerView.deleteStandbyOrder('${config.orderId}', '${config.standbyId}')">
+              Eliminar orden de pendientes
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal-reassign-opt').remove()">Cancelar</button>
           </div>
         </div>
       </div>
     `;
 
-    const existing = document.getElementById("modal-assignments-popup");
+    const existing = document.getElementById("modal-reassign-opt");
     if (existing) existing.remove();
     document.body.insertAdjacentHTML("beforeend", modalHtml);
   }
 
-  // --- EXPORTAR REGISTROS DE STANDBY A CSV ---
-  function exportStandbyToCSV() {
-    const standbyList = App.getDbTable("tbStandby") || [];
-    const activeStandby = standbyList.filter((s) => s.STATUS !== "RESOLVED" && s.STATUS !== "ELIMINADO");
+  // 2. FUNCIÓN PARA ELIMINAR LA ORDEN DE STANDBY
+  async function deleteStandbyOrder(orderId, standbyId) {
+    if (!confirm(`¿Estás seguro de que deseas ELIMINAR definitivamente la orden ${orderId}?`)) return;
 
-    if (activeStandby.length === 0) {
-      App.showToast("No hay datos en Standby para exportar.", "warning");
-      return;
+    App.showLoader(`Eliminando orden ${orderId}...`);
+
+    try {
+      if (standbyId) {
+        await GasAPI.send("removeFromStandby", { standbyIds: [standbyId] });
+      }
+
+      App.hideLoader();
+      App.showToast(`🗑️ Orden ${orderId} eliminada correctamente.`, "info");
+
+      const modal = document.getElementById("modal-reassign-opt");
+      if (modal) modal.remove();
+
+      await App.refreshDatabase();
+      render(); // Refresca las vistas
+    } catch (e) {
+      App.hideLoader();
+      App.showToast("Error al eliminar la orden: " + e.message, "error");
     }
+  }
 
-    const headers = ["ORDER_ID", "PCN_ID", "WIDTH", "CELLS", "REASON", "FECHA_STANDBY", "STATUS"];
+  // 3. EJECUTAR REASIGNACIÓN Y ACTUALIZAR BD
+  async function confirmReassignment(orderId, pcnId, width, cells, targetMaterialId, standbyId) {
+    if (!confirm(`¿Confirmas reasignar la orden ${orderId} al sobrante ${targetMaterialId}?`)) return;
 
-    let csvContent = "\uFEFF";
-    csvContent += headers.join(",") + "\r\n";
+    App.showLoader(`Reasignando orden ${orderId} a sobrante ${targetMaterialId}...`);
 
-    activeStandby.forEach((row) => {
-      const orderId = String(row.ORDER_ID || row.orderId || "");
-      const pcnId = String(row.PCN_ID || row.pcnId || "");
-      const width = row.WIDTH || row.width || "0";
-      const cells = row.CELLS || row.cells || "0";
-      const reason = row.REASON || row.reason || "";
-      const fecha = row.FECHA_STANDBY || row.FECHA || row.orderDate || "";
-      const status = row.STATUS || row.status || "STANDBY";
+    try {
+      // Reasignación via backend (GasAPI)
+      const res = await GasAPI.send("reassignOrder", {
+        orderId: orderId,
+        pcnId: pcnId,
+        width: width,
+        cells: cells,
+        targetMaterialId: targetMaterialId,
+        reason: "REASIGNADO_OPTIMIZER"
+      });
 
-      const formattedOrderId = orderId ? `="${orderId}"` : '""';
-      const formattedPcnId = pcnId ? `="${pcnId}"` : '""';
+      // Quitar registro de Standby
+      if (standbyId) {
+        await GasAPI.send("removeFromStandby", { standbyIds: [standbyId] });
+      }
 
-      const line = [
-        formattedOrderId,
-        formattedPcnId,
-        width,
-        cells,
-        `"${reason}"`,
-        `"${fecha}"`,
-        `"${status}"`,
-      ].join(",");
+      App.hideLoader();
 
-      csvContent += line + "\r\n";
-    });
+      if (res && res.success) {
+        App.showToast(`✅ Orden ${orderId} reasignada con éxito al sobrante ${targetMaterialId}`, "success");
+        
+        const modal = document.getElementById("modal-reassign-opt");
+        if (modal) modal.remove();
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
+        await App.refreshDatabase();
+        render(); // Refresca los paneles del optimizador
+      } else {
+        App.showToast("Error en reasignación: " + (res?.message || "Error desconocido"), "error");
+      }
 
-    const dateStr = new Date().toISOString().slice(0, 10);
-    link.setAttribute("download", `Reporte_Standby_${dateStr}.csv`);
-    document.body.appendChild(link);
-
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    App.showToast("Archivo CSV de Standby exportado con éxito.", "success");
+    } catch (e) {
+      App.hideLoader();
+      App.showToast("Error de comunicación: " + e.message, "error");
+    }
   }
 
   return {
     render: render,
-    lookupOrderId: lookupOrderId,
-    openSearchModalFromPopup: openSearchModalFromPopup,
-    openSearchModal: openSearchModal,
-    selectMaterialFromModal: selectMaterialFromModal,
-    clearMaterialOverride: clearMaterialOverride,
-    executeReassignment: executeReassignment,
-    sendToStandbyDirectly: sendToStandbyDirectly,
-    deleteStandbyGroup: deleteStandbyGroup,
-    openAssignmentsModal: openAssignmentsModal,
-    exportStandbyToCSV: exportStandbyToCSV,
-    renderStandbyTable: renderStandbyTable,
+    onOrderFilterInput: onOrderFilterInput,
+    clearOrderFilter: clearOrderFilter,
+    toggleSelectAllParents: toggleSelectAllParents,
+    assignSelectedToPicker: assignSelectedToPicker,
+    reprocessStandbyItem: reprocessStandbyItem,
+    confirmReassignment: confirmReassignment,
+    deleteStandbyOrder: deleteStandbyOrder,
+    stopAutoRefresh: stopAutoRefresh
   };
 })();
