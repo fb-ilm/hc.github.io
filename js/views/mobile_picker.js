@@ -9,7 +9,6 @@ const MobilePickerView = (function () {
   let currentPickIndex = 0;
   let searchFilterQuery = "";
 
-  // Helper para obtener siempre el contenedor correcto de la pestaña
   function getContainer() {
     return document.getElementById("picker-view") || document.getElementById("main-content");
   }
@@ -23,7 +22,6 @@ const MobilePickerView = (function () {
     }
   }
 
-  // 1. PANTALLA DE ACCESO MÓVIL POR NÚMERO DE EMPLEADO
   function renderLogin(container) {
     const target = container || getContainer();
     target.innerHTML = `
@@ -47,7 +45,7 @@ const MobilePickerView = (function () {
     }, 100);
   }
 
-  function handleLogin(e) {
+  async function handleLogin(e) {
     if (e) e.preventDefault();
     const inputEl = document.getElementById("input-employee-id");
     if (!inputEl) return;
@@ -63,8 +61,17 @@ const MobilePickerView = (function () {
     currentUser = input;
     localStorage.setItem("session_picker_user", currentUser);
     App.showToast(`Sesión iniciada: ${currentUser}`, "success");
-    
-    // Renderizado inmediato sobre el contenedor correcto
+
+    App.showLoader("Cargando datos de recolección...");
+    if (typeof App.refreshDatabase === "function") {
+      await App.refreshDatabase();
+    }
+    App.hideLoader();
+
+    if (typeof App.switchView === "function") {
+      App.switchView("picker-view");
+    }
+
     render(getContainer());
   }
 
@@ -74,15 +81,18 @@ const MobilePickerView = (function () {
     selectedOrders = [];
     searchFilterQuery = "";
     App.showToast("Sesión del recolector cerrada.", "info");
+
+    if (typeof App.switchView === "function") {
+      App.switchView("picker-view");
+    }
+
     render(getContainer());
   }
 
-  // 2. VISTA PRINCIPAL - ESTRUCTURA BASE
   function renderMainPicker(container) {
     const target = container || getContainer();
     target.innerHTML = `
       <div style="max-width: 480px; margin: 0 auto; padding-bottom: 20px;">
-        <!-- CABECERA DE SESIÓN -->
         <div style="display: flex; justify-content: space-between; align-items: center; background: #1e293b; color: #fff; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px;">
           <div>
             <span style="font-size: 0.75rem; color: #94a3b8;">RECOLECTOR:</span>
@@ -91,7 +101,6 @@ const MobilePickerView = (function () {
           <button type="button" class="btn btn-sm btn-outline-danger" style="color: #fff; border-color: #ef4444;" onclick="MobilePickerView.logout()">Salir</button>
         </div>
 
-        <!-- BÚSQUEDA Y FILTRADO POR ORDEN -->
         <div class="card" style="padding: 14px; margin-bottom: 12px; background: #fff; border-radius: 6px; border: 1px solid #e2e8f0;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
             <h3 style="margin: 0; font-size: 1rem;">Ruta de Recolección</h3>
@@ -111,7 +120,6 @@ const MobilePickerView = (function () {
           </form>
         </div>
 
-        <!-- CONTENEDOR DINÁMICO DE TARJETAS -->
         <div id="container-active-groups"></div>
 
         <div style="position: sticky; bottom: 10px; margin-top: 16px;">
@@ -126,6 +134,7 @@ const MobilePickerView = (function () {
     renderCardsOnly();
   }
 
+  // 1. DIBUJO DE TARJETAS CON BUSQUEDA DE MEDIDAS REALES DEL PADRE EN tbInventario
   function renderCardsOnly() {
     const container = document.getElementById("container-active-groups");
     const cartBadge = document.getElementById("lbl-cart-badge");
@@ -141,18 +150,32 @@ const MobilePickerView = (function () {
 
     if (!container) return;
 
-    const assignments = App.getDbTable("tbAsignaciones") || [];
-    const activeAssignments = assignments.filter(a => String(a.STATUS || a.status || "").trim().toUpperCase() === "ACTIVADO");
+    const pickerAssignments = App.getDbTable("tbPickers") || [];
+    const inventory = App.getDbTable("tbInventario") || [];
+
+    const myAssignments = pickerAssignments.filter(a => 
+      String(a.OPERATOR_ID || a.operatorId || "").trim().toUpperCase() === String(currentUser).trim().toUpperCase() &&
+      String(a.STATUS || a.status || "").trim().toUpperCase() === "PENDIENTE"
+    );
 
     const groupsMap = {};
-    activeAssignments.forEach(a => {
+    myAssignments.forEach(a => {
       const parentId = String(a.MATERIAL_ID || a.materialId).trim();
+      
       if (!groupsMap[parentId]) {
+        // BUSCAR MEDIDAS REALES DEL SOBRANTE PADRE EN INVENTARIO
+        const invMatch = inventory.find(i => String(i.MATERIAL_ID || i.materialId || "").trim() === parentId);
+        
+        const realWidth = invMatch ? Number(invMatch.WIDTH || invMatch.width || 0) : Number(a.PARENT_WIDTH || a.MAT_WIDTH || 0);
+        const realCells = invMatch ? Number(invMatch.CELLS || invMatch.cells || 0) : Number(a.PARENT_CELLS || a.MAT_CELLS || 0);
+
         groupsMap[parentId] = {
           parentMaterialId: parentId,
           rack: a.RACK || 'N/A',
           loc: a.LOC || 'N/A',
           pcnId: a.PCN_ID || a.pcnId,
+          parentWidth: realWidth,
+          parentCells: realCells,
           orders: []
         };
       }
@@ -173,7 +196,7 @@ const MobilePickerView = (function () {
 
     if (groupsList.length === 0) {
       container.innerHTML = `<p style="color: #64748b; text-align: center; padding: 30px; background: #fff; border-radius: 6px; border: 1px solid #e2e8f0;">
-        ${searchFilterQuery ? `No se encontraron sobrantes padre que contengan la orden "${searchFilterQuery}".` : 'No hay órdenes con estatus "ACTIVADO" pendientes.'}
+        ${searchFilterQuery ? `No se encontraron sobrantes que contengan "${searchFilterQuery}".` : 'No tienes rutas de recolección asignadas por el optimizador.'}
       </p>`;
       return;
     }
@@ -198,13 +221,19 @@ const MobilePickerView = (function () {
 
       cardsHtml += `
         <div class="card" style="padding: 12px; margin-bottom: 10px; border-radius: 8px; ${cardStyle}">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <strong style="font-family: monospace; font-size: 1rem; color: #1e293b;">PADRE: ${g.parentMaterialId}</strong>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <strong style="font-family: monospace; font-size: 0.95rem; color: #1e293b;">PADRE: ${g.parentMaterialId}</strong>
             <span class="badge" style="background: #0284c7; color: #fff; font-size: 0.8rem; padding: 4px 8px;">
               📍 ${g.rack}-${g.loc}
             </span>
           </div>
-          <div style="font-size: 0.8rem; color: #475569; margin-bottom: 6px;">
+
+          <!-- MUESTRA MEDIDAS REALES OBTENIDAS DE INVENTARIO -->
+          <div style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; color: #0f172a; font-weight: bold; margin-bottom: 8px; display: inline-block;">
+            📏 Medidas Padre: <span style="color: #2563eb;">${g.parentWidth}W x ${g.parentCells}C</span>
+          </div>
+
+          <div style="font-size: 0.8rem; color: #475569; margin-bottom: 4px;">
             <b>PCN:</b> ${g.pcnId} | <b>Órdenes (${g.orders.length}):</b>
           </div>
           <ul style="margin: 0 0 10px 18px; padding: 0; color: #334155;">
@@ -243,6 +272,7 @@ const MobilePickerView = (function () {
 
   function toggleSelectGroup(parentMaterialId) {
     const idx = selectedOrders.findIndex(s => s.parentMaterialId === parentMaterialId);
+    
     if (idx !== -1) {
       selectedOrders.splice(idx, 1);
     } else {
@@ -250,23 +280,45 @@ const MobilePickerView = (function () {
         App.showToast("Máximo 5 sobrantes padre por ruta de recolección.", "warning");
         return;
       }
-      const assignments = App.getDbTable("tbAsignaciones") || [];
-      const groupOrders = assignments.filter(a => String(a.MATERIAL_ID || a.materialId).trim() === parentMaterialId && String(a.STATUS).toUpperCase() === 'ACTIVADO');
+
+      const pickerAssignments = App.getDbTable("tbPickers") || [];
+      const inventory = App.getDbTable("tbInventario") || [];
+
+      const groupOrders = pickerAssignments.filter(a => 
+        String(a.OPERATOR_ID || a.operatorId || "").trim().toUpperCase() === String(currentUser).trim().toUpperCase() &&
+        String(a.MATERIAL_ID || a.materialId || "").trim() === String(parentMaterialId).trim() &&
+        String(a.STATUS || a.status || "").trim().toUpperCase() === "PENDIENTE"
+      );
 
       if (groupOrders.length > 0) {
+        const first = groupOrders[0];
+        const invMatch = inventory.find(i => String(i.MATERIAL_ID || i.materialId || "").trim() === String(parentMaterialId).trim());
+
+        const realWidth = invMatch ? Number(invMatch.WIDTH || invMatch.width || 0) : Number(first.PARENT_WIDTH || 0);
+        const realCells = invMatch ? Number(invMatch.CELLS || invMatch.cells || 0) : Number(first.PARENT_CELLS || 0);
+
         selectedOrders.push({
           parentMaterialId: parentMaterialId,
-          rack: groupOrders[0].RACK || 'N/A',
-          loc: groupOrders[0].LOC || 'N/A',
-          pcnId: groupOrders[0].PCN_ID || groupOrders[0].pcnId,
+          rack: first.RACK || first.rack || 'N/A',
+          loc: first.LOC || first.loc || 'N/A',
+          pcnId: first.PCN_ID || first.pcnId || 'N/A',
+          parentWidth: realWidth,
+          parentCells: realCells,
           orders: groupOrders
         });
+      } else {
+        App.showToast("No se encontraron órdenes pendientes para este sobrante.", "error");
+        return;
       }
     }
+
     renderCardsOnly();
   }
 
-  // 3. VISTA PASO A PASO EN LA RUTA
+  function goBackToMenu() {
+    renderMainPicker(getContainer());
+  }
+
   function startRoute() {
     if (selectedOrders.length === 0) {
       App.showToast("Selecciona al menos un sobrante padre para iniciar.", "warning");
@@ -276,6 +328,7 @@ const MobilePickerView = (function () {
     renderPickCard(getContainer());
   }
 
+  // 2. LECTURA DIRECTA DE LAYOUT_TYPE DESDE tbAsignaciones
   function renderPickCard(container) {
     const target = container || getContainer();
     const current = selectedOrders[currentPickIndex];
@@ -287,37 +340,47 @@ const MobilePickerView = (function () {
 
     const parentMatIdStr = String(current.parentMaterialId).trim();
 
+    // 1. LEER REMANENTES RESULTANTES (SUB-SOBRANTES)
     const allSubSobrantes = App.getDbTable("tbSobrantesResultantes") || [];
     const matchedSubRems = allSubSobrantes.filter(s => {
       const pKey = String(s.PARENT_MATERIAL_ID || s.parentMaterialId || s.MATERIAL_PADRE || s.parent_material_id || "").trim();
       return pKey === parentMatIdStr;
-    }).map((s, idx) => {
-      const subId = String(s.SUB_MATERIAL_ID || s.subMaterialId || s.sub_material_id || `SUB-${idx + 1}`);
-      const w = Number(s.WIDTH || s.width || 0);
-      const c = Number(s.CELLS || s.cells || 0);
-      let typeStr = String(s.TYPE || s.type || "").trim().toUpperCase();
-
-      if (!typeStr) {
-        typeStr = subId.includes("-SUB2") ? 'BOTTOM' : 'LATERAL';
-      }
-
-      return {
-        subMaterialId: subId,
-        width: w,
-        cells: c,
-        type: typeStr
-      };
     });
 
-    const subLateral = matchedSubRems.find(s => s.type === 'LATERAL') || (matchedSubRems.length > 0 ? matchedSubRems[0] : null);
-    const subBottom = matchedSubRems.find(s => s.type === 'BOTTOM') || (matchedSubRems.length > 1 ? matchedSubRems[1] : null);
+    const subLateral = matchedSubRems.find(s => String(s.TYPE || s.type || "").trim().toUpperCase() === 'LATERAL');
+    const subBottom = matchedSubRems.find(s => String(s.TYPE || s.type || "").trim().toUpperCase() === 'BOTTOM');
 
+    // 2. RECUPERAR Y LIMPIAR LAYOUT_TYPE EXPLICITAMENTE DESDE TODAS LAS FUENTES POSIBLES
+    const allAssignments = App.getDbTable("tbAsignaciones") || [];
+    const firstOrd = current.orders[0] || {};
+    const firstOrdId = String(firstOrd.ORDER_ID || firstOrd.orderId || "").trim();
+
+    // Búsqueda en tbAsignaciones por ORDER_ID o por MATERIAL_ID
+    const asigMatch = allAssignments.find(a => 
+      String(a.ORDER_ID || a.orderId || "").trim() === firstOrdId ||
+      String(a.MATERIAL_ID || a.materialId || "").trim() === parentMatIdStr
+    );
+
+    // Extraer cualquier variante de la clave LAYOUT_TYPE y limpiar espacios/caracteres
+    const rawLayoutVal = String(
+      asigMatch?.LAYOUT_TYPE || asigMatch?.layoutType || asigMatch?.layout_type ||
+      firstOrd.LAYOUT_TYPE || firstOrd.layoutType || firstOrd.layout_type || 
+      current.layoutType || ""
+    ).trim().toUpperCase();
+
+    // Evaluador estricto: Si contiene "VERT", "COL" o es "CELLS" -> Es VERTICAL (column)
+    let isVertical = rawLayoutVal.includes("VERT") || rawLayoutVal.includes("COL") || rawLayoutVal === "CELLS";
+
+    // RESPALDO DE SEGURIDAD GEOMÉTRICO (Si LAYOUT_TYPE venía vacío en la BD):
+    // Si no hay layout explícito pero existe un sobrante resultarte BOTTOM (y no LATERAL), obligatoriamente es VERTICAL.
+    if (!rawLayoutVal && subBottom && !subLateral) {
+      isVertical = true;
+    }
+
+    // 3. CÁLCULOS DE PIEZAS Y CONSTRUCCIÓN DE ÓRDENES
     const colors = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777"];
     const sumW = current.orders.reduce((sum, o) => sum + Number(o.WIDTH || o.width || 0), 0);
     const sumC = current.orders.reduce((sum, o) => sum + Number(o.CELLS || o.cells || 0), 0);
-    const maxC = current.orders.reduce((max, o) => Math.max(max, Number(o.CELLS || o.cells || 0)), 0);
-    
-    const isVertical = sumC > maxC;
 
     let ordersListHtml = "";
     let ordersPiecesHtml = "";
@@ -330,43 +393,58 @@ const MobilePickerView = (function () {
 
       ordersListHtml += `<li style="font-family: monospace; font-size: 0.85rem;"><b>${ordId}</b> (${w}W x ${c}C)</li>`;
 
+      // Si es VERTICAL calcula por Celdas (C); si es HORIZONTAL calcula por Ancho (W)
       const pieceDimension = isVertical ? c : w;
-      const totalDimension = isVertical ? sumC : sumW;
+      const totalDimension = isVertical ? (sumC || 1) : (sumW || 1);
       const pct = (pieceDimension / totalDimension) * 100 || 0;
-      const pieceStyle = isVertical ? `width: 100%; height: ${pct}%;` : `width: ${pct}%; height: 100%;`;
+      
+      const pieceStyle = isVertical 
+        ? `width: 100%; height: ${pct}%;` 
+        : `width: ${pct}%; height: 100%;`;
 
       ordersPiecesHtml += `
-        <div style="${pieceStyle} background: ${bg}; color: #fff; font-size: 0.72rem; font-weight: bold; display: flex; justify-content: space-between; align-items: center; padding: 2px 6px; border-radius: 2px; overflow: hidden;" title="${ordId}">
+        <div style="${pieceStyle} background: ${bg}; color: #fff; font-size: 0.72rem; font-weight: bold; display: flex; justify-content: space-between; align-items: center; padding: 2px 6px; border-radius: 2px; overflow: hidden; box-sizing: border-box;" title="${ordId}">
           <span><b>${ordId}</b></span>
           <span style="font-size: 0.65rem; opacity: 0.9;">${w}W x ${c}C</span>
         </div>`;
     });
 
-    const topBlockHeight = (subBottom && subBottom !== subLateral) ? "70%" : "100%";
+    const topBlockHeight = subBottom ? "70%" : "100%";
     const ordersColWidth = subLateral ? "65%" : "100%";
 
     let layoutGraphicHtml = `
-      <div style="position: relative; width: 100%; height: 170px; background: #0f172a; border: 2px solid #475569; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; padding: 4px; gap: 4px;">
+      <div style="position: relative; width: 100%; height: 170px; background: #0f172a; border: 2px solid #475569; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden; padding: 4px; gap: 4px; box-sizing: border-box;">
+        
+        <!-- BLOQUE SUPERIOR DE ÓRDENES -->
         <div style="display: flex; width: 100%; height: ${topBlockHeight}; gap: 4px; overflow: hidden;">
+          
           <div style="width: ${ordersColWidth}; height: 100%; display: flex; flex-direction: ${isVertical ? 'column' : 'row'}; gap: 2px;">
             ${ordersPiecesHtml}
           </div>`;
 
     if (subLateral) {
+      const subId = subLateral.SUB_MATERIAL_ID || subLateral.subMaterialId || "SUB-LATERAL";
+      const w = subLateral.WIDTH || subLateral.width || 0;
+      const c = subLateral.CELLS || subLateral.cells || 0;
+
       layoutGraphicHtml += `
-        <div style="width: 35%; height: 100%; background: #1e293b; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 2px;" title="Sobrante Resultante: ${subLateral.subMaterialId}">
-          <span style="color: #38bdf8; font-family: monospace; font-size: 0.75rem;">✂️ ${subLateral.subMaterialId}</span>
-          <span style="font-size: 0.68rem; color: #cbd5e1; margin-top: 2px;">${subLateral.width}W x ${subLateral.cells}C</span>
+        <div style="width: 35%; height: 100%; background: #1e293b; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 2px; box-sizing: border-box;" title="Sobrante Resultante LATERAL: ${subId}">
+          <span style="color: #38bdf8; font-family: monospace; font-size: 0.75rem;">✂️ ${subId}</span>
+          <span style="font-size: 0.68rem; color: #cbd5e1; margin-top: 2px;">LATERAL<br>${w}W x ${c}C</span>
         </div>`;
     }
 
-    layoutGraphicHtml += `</div>`;
+    layoutGraphicHtml += `</div>`; // FIN BLOQUE SUPERIOR
 
-    if (subBottom && subBottom !== subLateral) {
+    if (subBottom) {
+      const subId = subBottom.SUB_MATERIAL_ID || subBottom.subMaterialId || "SUB-BOTTOM";
+      const w = subBottom.WIDTH || subBottom.width || 0;
+      const c = subBottom.CELLS || subBottom.cells || 0;
+
       layoutGraphicHtml += `
-        <div style="width: 100%; height: 30%; background: #1e293b; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; justify-content: center; align-items: center; gap: 8px;" title="Sobrante Resultante: ${subBottom.subMaterialId}">
-          <span style="color: #38bdf8; font-family: monospace; font-size: 0.75rem;">✂️ ${subBottom.subMaterialId}</span>
-          <span style="font-size: 0.68rem; color: #cbd5e1;">(${subBottom.width}W x ${subBottom.cells}C)</span>
+        <div style="width: 100%; height: 30%; background: #1e293b; border: 2px dashed #38bdf8; border-radius: 4px; color: #ffffff; font-size: 0.75rem; font-weight: bold; display: flex; justify-content: center; align-items: center; gap: 8px; box-sizing: border-box;" title="Sobrante Resultante BOTTOM: ${subId}">
+          <span style="color: #38bdf8; font-family: monospace; font-size: 0.75rem;">✂️ ${subId} (BOTTOM)</span>
+          <span style="font-size: 0.68rem; color: #cbd5e1;">(${w}W x ${c}C)</span>
         </div>`;
     }
 
@@ -375,7 +453,7 @@ const MobilePickerView = (function () {
     target.innerHTML = `
       <div style="max-width: 480px; margin: 0 auto; padding-bottom: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="MobilePickerView.renderMainPicker(document.getElementById('picker-view') || document.getElementById('main-content'))">← Volver</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="MobilePickerView.goBackToMenu()">← Volver</button>
           <span style="font-size: 0.85rem; font-weight: bold; color: #64748b;">Material ${currentPickIndex + 1} de ${selectedOrders.length}</span>
         </div>
 
@@ -384,9 +462,15 @@ const MobilePickerView = (function () {
           <h1 style="margin: 4px 0 10px 0; color: #2563eb; font-size: 2.2rem;">📍 ${current.rack} - ${current.loc}</h1>
           <hr style="margin: 10px 0;">
 
-          <div style="font-size: 0.9rem; text-align: left; color: #334155; margin-bottom: 12px;">
-            <b>Sobrante Padre:</b> <span style="font-family: monospace; color: #2563eb; font-weight: bold;">${current.parentMaterialId}</span><br>
-            <b>PCN:</b> ${current.pcnId}
+          <!-- MUESTRA DE DATOS Y MEDIDAS REALES DEL PADRE -->
+          <div style="font-size: 0.9rem; text-align: left; color: #334155; margin-bottom: 12px; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span><b>Sobrante Padre:</b> <span style="font-family: monospace; color: #2563eb; font-weight: bold;">${current.parentMaterialId}</span></span>
+              <span style="background: #2563eb; color: #fff; font-size: 0.78rem; font-weight: bold; padding: 2px 8px; border-radius: 4px;">
+                📏 ${current.parentWidth}W x ${current.parentCells}C
+              </span>
+            </div>
+            <div><b>PCN:</b> ${current.pcnId}</div>
           </div>
 
           <div style="margin-bottom: 14px; text-align: left;">
@@ -429,16 +513,34 @@ const MobilePickerView = (function () {
     const scannedClean = String(scannedCode).trim();
 
     if (scannedClean === String(current.parentMaterialId).trim()) {
-      App.showLoader("Marcando material como TOMADO...");
+      App.showLoader("⏳ Registrando recolección en servidor...");
+
       try {
         const res = await GasAPI.send("markAssignmentAsTaken", { parentMaterialId: current.parentMaterialId });
-        App.hideLoader();
 
         if (res && res.success) {
-          App.showToast(`✅ Material ${current.parentMaterialId} verificado y marcado como TOMADO!`, "success");
-          await App.refreshDatabase();
+          App.showToast(`✅ Material ${current.parentMaterialId} marcado como TOMADO!`, "success");
+          
+          const dbPickers = App.getDbTable("tbPickers") || [];
+          dbPickers.forEach(a => {
+            if (String(a.MATERIAL_ID || a.materialId).trim() === current.parentMaterialId) {
+              a.STATUS = "TOMADO";
+            }
+          });
+
+          const printerIp = localStorage.getItem("cutter_printer_ip");
+          if (printerIp) {
+            GasAPI.send("printZplDirectToIP", {
+              printerIp: printerIp,
+              subId: current.parentMaterialId,
+              pcn: current.pcnId
+            }).catch(e => console.warn("Aviso de impresión:", e));
+          }
+
+          App.hideLoader();
           advancePickStep();
         } else {
+          App.hideLoader();
           App.showToast("Error actualizando estatus: " + (res?.message || "Error desconocido"), "error");
         }
       } catch (e) {
@@ -460,20 +562,29 @@ const MobilePickerView = (function () {
 
     if (!confirm(confirmMsg)) return;
 
-    App.showLoader("Enviando reporte a Standby...");
+    App.showLoader("⚠️ Enviando reporte de incidencia a Standby...");
+
     try {
       const res = await GasAPI.send("reportPickIssueToStandby", {
         parentMaterialId: current.parentMaterialId,
         issueType: issueType,
         operatorId: currentUser
       });
-      App.hideLoader();
 
       if (res && res.success) {
-        App.showToast(`⚠️ Incidencia ${issueType} registrada. La orden se envió a Standby.`, "warning");
-        await App.refreshDatabase();
+        App.showToast(`⚠️ Incidencia ${issueType} registrada en Standby.`, "warning");
+        
+        const dbPickers = App.getDbTable("tbPickers") || [];
+        dbPickers.forEach(a => {
+          if (String(a.MATERIAL_ID || a.materialId).trim() === current.parentMaterialId) {
+            a.STATUS = "STANDBY_REPORTED";
+          }
+        });
+
+        App.hideLoader();
         advancePickStep();
       } else {
+        App.hideLoader();
         App.showToast("Error reportando incidencia: " + (res?.message || "Error desconocido"), "error");
       }
     } catch (e) {
@@ -490,7 +601,7 @@ const MobilePickerView = (function () {
       if (currentPickIndex >= selectedOrders.length) currentPickIndex = 0;
       renderPickCard(target);
     } else {
-      App.showToast("🎉 ¡Ruta de recolección finalizada!", "success");
+      App.showToast("🎉 ¡Ruta de recolección finalizada exitosamente!", "success");
       renderMainPicker(target);
     }
   }
@@ -503,6 +614,7 @@ const MobilePickerView = (function () {
     handleSearchSubmit: handleSearchSubmit,
     onSearchInput: onSearchInput,
     clearSearch: clearSearch,
+    goBackToMenu: goBackToMenu,
     startRoute: startRoute,
     renderMainPicker: renderMainPicker,
     verifyPickScan: verifyPickScan,
