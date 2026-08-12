@@ -16,11 +16,11 @@ const ValidatorView = (function () {
       <div class="view-header" style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
         <div>
           <h2>Asignación de remanentes</h2>
-          <p class="text-muted">Procesa órdenes, visualiza el acomodo y gestiona la activación de lotes.</p>
+          <p class="text-muted">Procesamiento de ordenes, visualización y gestión de acomodo de remanentes.</p>
         </div>
         <div style="display: flex; gap: 10px;">
           <button type="button" class="btn btn-outline-success" onclick="ValidatorView.openActivationModal()">
-            ⚡ Activar lote asignado
+            Activación de asignaciones
           </button>
           <button type="button" class="btn btn-outline-warning" onclick="ValidatorView.openStandbyModal()">
             Órdenes pendientes
@@ -1070,6 +1070,16 @@ const ValidatorView = (function () {
     }
 
     const formattedAssignments = assignmentsToSave.map(item => {
+      // Determinar la dirección visual del acomodo basado en la orientación calculada por NestingEngine
+      const isVertical = item.orientation === 'CELLS';
+      const layoutTypeStr = isVertical ? "COLUMN" : "ROW";
+
+      // Asignar el layoutType a cada orden individual
+      const ordersWithLayout = (item.orders || []).map(ord => ({
+        ...ord,
+        layoutType: layoutTypeStr
+      }));
+
       const subRems = (item.generatedSubRemanents || []).map(sub => {
         let typeStr = sub.type || sub.TYPE;
         if (!typeStr) {
@@ -1083,6 +1093,8 @@ const ValidatorView = (function () {
 
       return {
         ...item,
+        layoutType: layoutTypeStr,
+        orders: ordersWithLayout,
         generatedSubRemanents: subRems
       };
     });
@@ -1168,7 +1180,7 @@ const ValidatorView = (function () {
             <td style="padding: 8px;">${item.totalOrders} órdenes</td>
             <td style="padding: 8px;">
               <button class="btn btn-sm btn-success" onclick="ValidatorView.executeActivation('${item.idAsignacion}')">
-                ⚡ Activar Lote
+                Activar Lote
               </button>
             </td>
           </tr>`;
@@ -1181,11 +1193,11 @@ const ValidatorView = (function () {
       <div id="modal-activation-popup" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div style="background: #fff; width: 90%; max-width: 650px; border-radius: 8px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0; color: #1e293b;">⚡ Activar ID_Asignación</h3>
+            <h3 style="margin: 0; color: #1e293b;">⚡ Activar asignación</h3>
             <button type="button" onclick="document.getElementById('modal-activation-popup').remove()" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer;">✕</button>
           </div>
           <p style="font-size: 0.85rem; color: #475569; margin-bottom: 12px;">
-            Selecciona un lote de asignación para cambiar su estatus a <b>ACTIVADO</b> y liberarlo para la estación de corte.
+            Selecciona un lote de asignación para cambiar su estatus a <b>ACTIVADO</b> y liberarlo para la estación de optimización.
           </p>
           ${contentHtml}
           <div style="text-align: right; margin-top: 15px;">
